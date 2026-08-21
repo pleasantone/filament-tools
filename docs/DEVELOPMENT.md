@@ -1,120 +1,88 @@
 # Development and testing
 
-The project is a standard-library-only Python CLI. It has no build step, lockfile, or required third-party test runner.
+## Environment
 
-## Local requirements
-
-- Python 3.9 or newer
-- Optional: Ruff for static checks
-
-Use `python3` in repository documentation and verification commands. The `-B` flag prevents bytecode cache artifacts during routine checks.
-
-## Test suite
-
-Run all tests from the repository root:
+Use uv for environment creation, dependency resolution, locking, and command
+execution:
 
 ```bash
-python3 -B -m unittest discover -s tests -v
+uv sync
 ```
 
-The suite invokes the CLI in subprocesses. Tests disable automatic discovery and pass controlled search directories so results do not depend on profiles installed on the developer's machine.
+Do not create a virtual environment with `python -m venv` or install project
+dependencies with `pip`. `uv sync` creates and maintains the ignored `.venv`
+from `pyproject.toml` and `uv.lock`.
 
-Static fixtures in `tests/fixtures/profiles/` cover the normal PETG comparison and selector workflow. Tests create temporary JSON trees for behavior that needs isolation, including multi-level provenance, missing parents, inheritance cycles, and root profiles.
+Runtime dependencies are declared in `pyproject.toml`: Pydantic for typed recipe,
+draft, and API models; Typer/Rich for the CLI; and FastAPI/Uvicorn/NiceGUI for the
+local workbench. The profile-processing core remains independent of those
+interface frameworks.
 
-When adding tests:
+## Test layout
 
-- Use unique synthetic profile names so global fixture indexing cannot create accidental ambiguity.
-- Prefer exact selected paths when the test concerns inheritance rather than search ranking.
-- Assert return code and stderr as well as stdout when testing errors or warnings.
-- Use CSV for exact field-level assertions and terminal output for human-readable status behavior.
-- Inspect generated HTML as text for structure, classes, labels, and escaped content; do not require a browser for the unit suite.
-
-## Focused smoke checks
-
-Show CLI help and confirm all modes are registered:
-
-```bash
-python3 -B profile_diff.py --help
+```text
+tests/unit/          pure identity, resolution, transform, validation tests
+tests/integration/   catalog copies, installation transactions, editor API
+tests/cli/           installed command behavior through subprocesses
+tests/fixtures/      deterministic Bambu-style profile trees
 ```
 
-Run an effective comparison against committed fixtures:
+Run the repository-required suite:
 
 ```bash
-python3 -B profile_diff.py \
-  --no-auto-discover \
-  --search-dir tests/fixtures/profiles \
-  --select "Generic PETG H2C 0.4" \
-  --select "Bambu PETG HF H2C 0.4" \
-  --only-different \
-  --show-source
+uv run python -B -m unittest discover -s tests -v
 ```
 
-Run a single-profile override audit:
+CLI tests invoke the package with the same uv-managed Python interpreter.
+
+Use temporary profile/config trees. Tests must never write into live Bambu
+Studio or OrcaSlicer data. Cover missing parents, cycles, ambiguous names,
+system/bundled differences, JSON type equality, identity, exact compatibility,
+round trips, filename safety, no-overwrite behavior, and rollback.
+
+## Static and package checks
 
 ```bash
-python3 -B profile_diff.py \
-  --no-auto-discover \
-  --search-dir tests/fixtures/profiles \
-  --select "Bambu PETG HF H2C 0.4" \
-  --mode overrides
-```
-
-Write generated CSV or HTML to a temporary directory or the ignored repository-local `artifacts/` directory during smoke testing. The CLI does not create parent directories, so create it first when needed:
-
-```bash
-mkdir -p artifacts
-python3 -B profile_diff.py \
-  --no-auto-discover \
-  --search-dir tests/fixtures/profiles \
-  --select "Generic PETG H2C 0.4" \
-  --select "Bambu PETG HF H2C 0.4" \
-  --html artifacts/petg-diff.html
-```
-
-Do not commit generated reports.
-
-## Pre-handoff checks
-
-For code changes:
-
-```bash
-python3 -B -m unittest discover -s tests -v
-ruff check profile_diff.py tests/test_profile_diff.py
-git diff --check
-git status --short
-```
-
-Ruff is optional until the repository declares it as a development dependency; if it is unavailable, report that and still run the test suite and `git diff --check`.
-
-For documentation-only changes, run at least:
-
-```bash
+uv run ruff check src tests
+uv run ruff format --check src tests
+uv build
 git diff --check
 ```
 
-Then inspect relative Markdown links and command names manually.
+Confirm that the NiceGUI workbench module is in the wheel and that `/` renders
+without fetching UI assets from a CDN.
+
+## Smoke checks
+
+```bash
+uv run filament-tools --help
+uv run filament-tools --no-auto-discover \
+  --search-dir tests/fixtures/profiles catalog search PETG
+uv run filament-tools --no-auto-discover \
+  --search-dir tests/fixtures/profiles compare \
+  "Generic PETG H2C 0.4" "Bambu PETG HF H2C 0.4" --only-different
+```
+
+Write generated profiles/reports to a temporary directory or ignored
+`artifacts/`. Do not leave caches or reports in the repository.
 
 ## Change checklist
 
-For a CLI option or semantic change:
+For domain behavior:
 
-1. Update argument parsing and `--help` text.
-2. Keep validation errors on stderr with a nonzero exit code.
-3. Update the shared collection model before changing renderers.
-4. Verify terminal, CSV, and HTML behavior where the change applies.
-5. Add a synthetic regression test for the main path and relevant failure path.
-6. Update the README's user-facing examples.
-7. Update `docs/ARCHITECTURE.md` if an invariant, pipeline stage, or output contract changed.
+1. Preserve raw/effective/provenance separation.
+2. Add a unit regression and relevant integration/CLI test.
+3. Update `ARCHITECTURE.md` when an invariant changes.
+4. Update the README when user-visible behavior changes.
 
-For profile discovery or inheritance changes, also test ambiguous names, exact-path selection, effective source provenance, missing parents, and cycles as applicable.
+For CLI/editor changes:
 
-## Generated and local files
+1. Keep semantics in services, not commands/routes/browser JavaScript.
+2. Return structured API errors and concise CLI stderr diagnostics.
+3. Test preview and mutation separately.
+4. Keep all filesystem writes exclusive or explicitly transactional.
+5. Exercise Profiles, Compare, Lineage, Compose, both output modes, and install
+   planning through the in-app browser Playwright surface when it is available.
 
-Do not commit:
-
-- `__pycache__/` or `*.pyc`
-- ad hoc CSV/HTML diff reports; put them in the ignored `artifacts/` directory
-- local Bambu Studio or OrcaSlicer profile exports containing personal data
-- editor or operating-system metadata
-
-If recurring local artifacts become a problem, add a narrowly scoped `.gitignore` in a dedicated change rather than silently staging generated files.
+Before handoff run the unittest suite, Ruff check/format check, `uv build`,
+`git diff --check`, and inspect `git status --short` for generated artifacts.

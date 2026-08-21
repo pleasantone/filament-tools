@@ -1,102 +1,172 @@
-# Architecture and behavior
+# Runtime architecture and invariants
 
-This document describes the current implementation of `profile_diff.py`. The README remains authoritative for user-facing CLI examples.
+The README is authoritative for CLI behavior. `PRODUCT_ARCHITECTURE.md` records
+the product-level analysis and roadmap. This document describes the implemented
+runtime boundaries and invariants.
 
-## Runtime pipeline
+## Dependency direction
 
-The CLI follows this sequence:
+Core domain modules (`model`, `schema`, `catalog`, `selectors`, `resolution`,
+`comparison`, `identity`, `transforms`, `validation`, and `installation`) do not
+depend on the CLI or editor. `ProfileWorkbench` composes those services. Typer,
+Rich, FastAPI, and Uvicorn are adapters at the edge.
 
-1. Parse repeated `--select` specifications into `ProfileSelector` objects.
-2. Build search roots from explicit directories, selected file paths, optional platform discovery, and likely profile directories below the current working directory.
-3. Build a `ProfileIndex` over JSON objects that look like presets.
-4. Resolve every selector to one distinct `Profile`, including optional machine/nozzle compatibility filtering.
-5. Resolve inheritance where the requested mode needs effective values.
-6. Apply metadata, regex, group, and difference filters.
-7. Render terminal output and optional CSV or HTML files.
+No renderer, command, or API route may independently resolve inheritance,
+calculate deltas, manufacture identities, or decide installation destinations.
 
-`main()` owns argument validation and orchestration. Keep lower-level functions independent of `argparse` so their behavior remains testable.
+## Profile catalog
 
-## Data model
+`ProfileCatalog` indexes JSON objects that resemble slicer presets. Bulk scans
+ignore malformed/unrelated JSON; explicit path loads surface parse and shape
+errors. Names, filename stems, and paths are indexed separately.
 
-`Profile` contains the source `Path` and decoded JSON object. Its `name` falls back to the filename stem, and its `inherits` property normalizes an empty parent to `None`.
+Search ranking is exact name, exact stem, prefix, then substring. Corresponding
+managed `system` and bundled `resources/profiles` paths are collapsed before
+selection. The system copy wins and a warning is emitted once when parsed JSON
+differs. All other equal-rank ambiguity is an error. Exact paths remain the
+escape hatch.
 
-`EffectiveProfile` contains:
+Selectors filter on recursively resolved `compatible_printers`. Machine matching
+is case-insensitive; nozzle matching recognizes a numeric diameter followed by
+`nozzle` and does not infer nozzle material.
 
-- the selected `Profile`
-- merged effective `values`
-- a `sources` map naming the profile that explicitly supplied each value
-- the root-to-child inheritance `chain`
+## Resolution and provenance
 
-`OverrideReport` is deliberately different from a multi-way diff row. It represents one selected profile, the effective state of its immediate parent, parent-resolution status, and only that child's explicit keys.
+`ProfileResolver` recursively resolves `inherits`, starting with the parent and
+overlaying explicit child keys. Every effective key has both a source profile
+name and exact source path. Nullable per-extruder vectors are resolved
+positionally: a child `"nil"` element inherits the corresponding parent element,
+and element-level source names and paths preserve mixed provenance. Root `"nil"`
+values remain literal slicer defaults because no parent exists. The chain is
+root-to-child. Resolved effective JSON has a stable SHA-256 fingerprint for
+saved-draft drift detection.
 
-## Profile indexing and selection
+The active path detects cycles. Missing, cyclic, or ambiguous parents invalidate
+effective resolution. Override reports are intentionally resilient: explicit
+child keys remain visible while parent values are marked unavailable.
 
-`ProfileIndex` recursively indexes JSON files below each unique search root. Malformed JSON and objects that do not resemble presets are ignored during bulk indexing. Loading an explicitly selected file is strict and surfaces JSON or shape errors.
+Raw JSON, effective settings, and explicit overrides are separate concepts and
+must not share a misleading value model.
 
-Profiles are indexed by case-folded JSON `name`, filename stem, and resolved path. Search ranking prefers:
+## Comparison
 
-1. exact profile name
-2. exact filename stem
-3. prefix matches
-4. substring matches
+`comparison.py` collects typed rows before rendering. Metadata, key regex,
+semantic group, and difference filters apply in this layer so terminal, CSV,
+HTML, and API clients see the same selected data.
 
-Before compatibility filtering, corresponding profiles in an application's `system` and bundled `resources/profiles` trees are recognized by their relative paths. The system copy is authoritative. If its parsed JSON differs from the bundled copy, selection emits one stderr warning containing both paths. Performing this step before compatibility filtering ensures a stale bundled copy cannot win merely because its compatibility metadata differs.
+JSON equality is type-sensitive: `1`, `1.0`, `true`, and `"1"` are distinct.
+Missing values are represented by absent keys internally and rendered as `∅`.
 
-When other equally ranked candidates remain, selection fails with their paths and source classifications. Unrelated same-name variants and matches across applications are never collapsed. An exact JSON path bypasses copy preference and remains a reliable escape hatch.
+## Composition, draft, and transformation pipeline
 
-Each selector has this grammar:
+`CompositionRecipe` records one starting source, any number of reference
+sources, per-setting source/custom/removal choices, source fingerprints, and an
+output policy. Identity and compatibility keys are locked out of ordinary
+composition and remain dedicated output controls. Materialization retains two
+origins: the profile selected by the user and the ancestor that actually defines
+its effective value.
 
-```text
-PROFILE[;machine=MACHINE][;nozzle=DIAMETER][;label=DISPLAY NAME]
-```
+Unselected settings come from the starting source. Group actions are expanded
+into explicit per-setting selections, so saved recipes have no hidden group
+precedence. A recipe compiles into the same `ProfileDraft` used by builders; the
+recipe can therefore switch between sparse and root output without changing its
+desired effective values. Source fingerprint drift is a warning.
 
-Machine and nozzle filtering use the effective `compatible_printers` value. This is important because filenames do not reliably encode nozzle compatibility. Nozzle matching currently recognizes a numeric diameter followed by `nozzle`; it does not infer nozzle material.
+`ProfileDraft` records desired edits, removals, source/base fingerprints, output
+mode, compatibility, identity policy, and optional variants. The builder first
+derives one desired effective map from the source plus edits. Output modes are
+projections of that state.
 
-## Inheritance resolution
+Sparse projection:
 
-`resolve_effective()` recursively resolves `inherits`, copies the parent's effective values and source map, then overlays the child's explicit keys. The child becomes the source for every key it supplies. Completed resolutions are cached by absolute path.
+- requires a resolvable base with effective `filament_id`;
+- emits type-sensitive behavioral differences only;
+- cannot represent deletion of a base-supplied setting;
+- reconstructs name/from/version/settings identity explicitly;
+- omits material/cloud identity and retains required structural fields;
+- receives a round-trip equivalence check against base plus child.
 
-The active path stack detects cycles before caching a result. Normal effective comparison fails when the selected profile cannot be fully resolved; this prevents incomplete effective values from being presented as valid.
+Root projection:
 
-Parent lookup prefers an exact profile in the child's directory when duplicate names exist there. Otherwise it applies the managed system-copy preference and then follows normal ambiguity rules.
+- emits complete effective behavior with no `inherits`;
+- requires exact nonempty compatibility entries;
+- assigns one material `filament_id` by explicit/reuse/generate policy;
+- excludes cloud-owned identity and creates user preset metadata;
+- supports intentional setting removal because no parent is involved.
 
-## Diff modes
+Family projection creates separate roots with variant-specific compatibility and
+edits while passing one chosen `filament_id` to every artifact.
 
-| Mode | Minimum selections | Keys shown | Values compared | Source behavior |
-|---|---:|---|---|---|
-| `effective` | 2 | Union of effective keys | Each selected profile's resolved value | Optional with `--show-source` |
-| `raw` | 2 | Union of keys stored in selected JSON files | Unresolved explicit values | Optional; source is the selected profile |
-| `overrides` | 1 | Explicit keys, reported separately for every selected profile | Child value versus immediate parent's effective value | Always includes parent source |
+Generated filenames must exactly match profile names. Names cannot contain path
+separators. Writers use exclusive creation and family writes roll back earlier
+files when a later artifact fails.
 
-In override mode, difference labels mean:
+## Identity rules
 
-- `changed`: the parent has the key with a different JSON type or value.
-- `same`: the explicit child value exactly repeats the parent's effective type and value.
-- `added`: the parent resolves successfully but has no effective value for the key.
-- `no parent`: the selected profile does not declare `inherits`.
-- `unavailable`: a missing, ambiguous, malformed, or cyclic parent prevents a trustworthy comparison.
+`filament_id` is material-family identity. Generated IDs match Bambu Studio's
+initial `P` plus seven MD5 hexadecimal characters using `material_name` or
+`material_name@user_id`, with time-based collision fallback. Existing roots for
+the same inferred material name may be reused.
 
-Override mode is intentionally resilient: parent failures are visible in the report and as stderr warnings, while explicit child keys remain available. Effective mode remains strict because it claims to show complete resolved state.
+`filament_settings_id[0]` is the preset name. `setting_id` and sibling `.info`
+metadata are cloud-owned and never generated. See `BAMBU_PROFILE_IDENTITY.md`
+for pinned source references.
 
-## Filtering
+## Validation
 
-`META_KEYS_DEFAULT` is removed unless `--include-meta` is present. `--keys` is a regular expression over parameter names. Repeated `--group` values restrict keys using `group_for_key()`.
+Validation produces `ValidationIssue` objects with severity, stable code,
+message, optional setting, and optional path. It checks:
 
-For effective/raw multi-way comparisons, `--only-different` removes a row when every rendered value is identical. For override reports, it removes only `same` rows; added, changed, root, and unavailable rows remain visible.
+- safe name and filename/name agreement;
+- user origin, version, and `filament_settings_id`;
+- forbidden cloud metadata;
+- root `filament_id` and compatibility;
+- known printer names when machine profiles exist in the catalog;
+- sparse round-trip behavior and saved-draft source/base drift.
 
-When adding or changing a semantic group, update `GROUP_LABELS`, `group_for_key()`, README documentation, and group-filter tests together.
+Warnings are inspectable but do not block writes. Errors block generation and
+installation.
 
-## Output contracts
+## Installation
 
-Terminal, CSV, and HTML renderers consume the same collected rows or override reports. New filters and difference states must therefore be represented in the collection layer before rendering.
+Platform adapters own data-root discovery, application config names, active
+`preset_folder`, and destination layout. Bambu Studio is the default; OrcaSlicer
+is explicit.
 
-The effective/raw HTML view is a grouped multi-profile comparison. The override HTML view is organized by selected profile because each profile has a different parent and a different explicit-key set. Override CSV repeats profile and parent status on each row; a profile with no matching keys still receives an empty status row so it is not lost.
+`plan_install` resolves and validates every source before writing. Roots route to
+`filament/base`; children route to `filament`. Existing destination JSON or
+sibling `.info` is an error. `apply_install_plan` creates destinations
+exclusively and removes files created by the current transaction on failure.
+Pre-existing files are never removed.
 
-Keep output files self-contained. HTML must not depend on remote scripts, fonts, stylesheets, or network access.
+## Editor
 
-## Safe extension points
+The FastAPI app exposes catalog, profile, comparison, lineage, composition,
+preview, exclusive build, project persistence, install-plan, and confirmed
+installation endpoints. NiceGUI is mounted on that application and supplies a
+per-browser Profiles/Compare/Lineage/Compose/Build workbench. It calls the same
+`ProfileWorkbench` services and does not duplicate grouping, inheritance,
+composition, builders, identity, validation, or installation semantics.
 
-- Add profile discovery candidates in `discover_profile_roots()` and cover platform-independent behavior separately from OS path constants.
-- Add selector fields in `ProfileSelector`, `parse_selector()`, candidate filtering, help text, README syntax, and rejection tests as one change.
-- Add report formats after the collection layer; avoid reimplementing inheritance or filtering inside renderers.
-- If the script is split into modules, preserve `profile_diff.py` as the documented entry point unless a migration is explicitly requested.
+Lineage is queried contextually because presets have at most one parent. The
+initial page does not build the catalog-wide forest: a selected-profile query
+returns its ancestor chain and immediate dependents, and a bounded descendant
+query expands the requested branch. The catalog-wide flat graph remains an
+explicit problems/maintainer operation and retains unresolved nodes, missing
+parents, and cycles.
+
+Catalog UI queries apply managed-copy preference and effective type/filter scope
+before ranking, limiting, and pagination. The default scope is `type=filament`;
+an advanced all-types scope and exact paths remain escape hatches.
+
+The visual recipe has a monotonic workspace revision. Generated artifacts,
+validation, and installation plans are attached to the revision that produced
+them. A recipe change invalidates all three projections, and writes or installs
+require a valid current preview. The default Uvicorn bind is localhost and
+installation still requires a separately reviewed plan and confirmation action.
+
+## Output and errors
+
+Human output goes to stdout. Warnings and errors go to stderr. Domain errors
+return nonzero CLI status without tracebacks. CSV, HTML, project, generated
+profile, and installed profile writes refuse overwrite.

@@ -12,12 +12,14 @@ Before changing code:
 
    - `docs/ARCHITECTURE.md` for profile lookup, inheritance, diff modes, and output invariants.
    - `docs/DEVELOPMENT.md` for tests, fixtures, smoke checks, and change checklists.
+   - `docs/PRODUCT_ARCHITECTURE.md` for product boundaries, editor design, and the feature roadmap.
    - `.codex/memories/filament-profile-comparisons.md` for the analyzed comparison workflow and dated local-profile findings; verify the installed profiles before reusing snapshot values.
 
 ## Repository map
 
-- `profile_diff.py`: the supported CLI and implementation. There is no separate package or alternate versioned entry point.
-- `tests/test_profile_diff.py`: end-to-end CLI tests using `unittest` and subprocesses.
+- `src/filament_tools/`: domain services plus CLI and editor adapters.
+- `pyproject.toml`: dependencies, console entry point, packaging, and Ruff policy.
+- `tests/{unit,integration,cli}/`: layered `unittest` coverage.
 - `tests/fixtures/profiles/`: small, deterministic Bambu-style profile trees.
 - `README.md`: authoritative user-facing CLI documentation.
 - `docs/`: deeper maintainer references and historical context.
@@ -27,7 +29,7 @@ Before changing code:
 Run the focused suite after any behavior change:
 
 ```bash
-python3 -B -m unittest discover -s tests -v
+uv run python -B -m unittest discover -s tests -v
 ```
 
 Before handing off a code or documentation change, also run:
@@ -36,10 +38,11 @@ Before handing off a code or documentation change, also run:
 git diff --check
 ```
 
-If Ruff is installed, run:
+Run Ruff through uv:
 
 ```bash
-ruff check profile_diff.py tests/test_profile_diff.py
+uv run ruff check src tests
+uv run ruff format --check src tests
 ```
 
 Do not leave `__pycache__`, generated HTML/CSV reports, or other smoke-test artifacts in the repository.
@@ -52,12 +55,14 @@ Do not leave `__pycache__`, generated HTML/CSV reports, or other smoke-test arti
 - Match machine/nozzle selectors against effective `compatible_printers`, not filename conventions.
 - Keep `effective`, `raw`, and `overrides` semantics distinct. Override mode must still show explicit child keys when the parent is missing or cyclic.
 - Apply key, metadata, and group filters consistently to terminal, CSV, and HTML output.
-- Preserve current exit-code behavior and keep diagnostics on stderr.
+- Keep diagnostics on stderr and document intentional exit-code changes.
 
 ## Change discipline
 
-- Keep the implementation standard-library-only unless the user explicitly approves a dependency or packaging change.
-- Prefer focused edits to the current single-file design. Read `docs/ARCHITECTURE.md` before splitting modules or changing inheritance resolution.
+- Use `uv sync`, `uv run`, and `uv build`; do not create hand-built virtual
+  environments or install project dependencies with `pip`.
+- Prefer maintained Python libraries at interface boundaries. Keep core profile semantics framework-independent.
+- Put new behavior in its owning module; do not duplicate profile semantics in CLI commands, API routes, or browser JavaScript.
 - Add synthetic regression coverage for behavior changes. Use temporary profile trees for malformed, missing-parent, cyclic, and ambiguity cases.
 - When a CLI flag or output meaning changes, update `README.md` in the same change.
 - Put detailed design rationale, platform notes, or multi-step maintenance procedures in `docs/`; keep this file limited to rules needed on most turns.

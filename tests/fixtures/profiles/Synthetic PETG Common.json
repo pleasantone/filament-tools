@@ -1,6 +1,11 @@
 {
   "name": "Synthetic PETG Common",
   "type": "filament",
+  "from": "User",
+  "version": "1.10.0.0",
+  "filament_id": "P1234567",
+  "filament_settings_id": ["Synthetic PETG Common"],
+  "filament_extruder_variant": ["Direct Drive"],
   "instantiation": "false",
   "compatible_printers": [
     "Bambu Lab H2C 0.4 nozzle",

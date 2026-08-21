@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "filament-tools"
+version = "0.2.0"
+description = "Inspect, compare, build, validate, and install Bambu Studio and OrcaSlicer filament profiles"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "pleasantone" }]
+dependencies = [
+    "fastapi>=0.116,<1",
+    "nicegui>=3.12,<4",
+    "pydantic>=2.11,<3",
+    "rich>=14,<15",
+    "typer>=0.16,<1",
+    "uvicorn>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1",
+    "ruff>=0.12,<1",
+]
+
+[project.scripts]
+filament-tools = "filament_tools.cli.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/filament_tools"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "E501", "UP006", "UP007", "UP035", "UP045"]
