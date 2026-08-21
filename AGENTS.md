@@ -12,6 +12,7 @@ Before changing code:
 
    - `docs/ARCHITECTURE.md` for profile lookup, inheritance, diff modes, and output invariants.
    - `docs/DEVELOPMENT.md` for tests, fixtures, smoke checks, and change checklists.
+   - `.codex/memories/filament-profile-comparisons.md` for the analyzed comparison workflow and dated local-profile findings; verify the installed profiles before reusing snapshot values.
 
 ## Repository map
 
