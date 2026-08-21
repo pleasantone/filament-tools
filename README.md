@@ -196,4 +196,3 @@ The groups are `identity`, `compatibility`, `temperature`, `flow`, `cooling`, `r
 - [`AGENTS.md`](AGENTS.md) contains the repository-wide contribution rules and required checks.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains profile indexing, inheritance resolution, diff-mode semantics, filtering, and renderer contracts.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers the test strategy, fixture conventions, smoke commands, and change checklists.
-- [`docs/BAMBU_PROFILE_DIFF_CODEX_HANDOFF.md`](docs/BAMBU_PROFILE_DIFF_CODEX_HANDOFF.md) is a historical research and design snapshot. It is retained for context but is not authoritative for current behavior.

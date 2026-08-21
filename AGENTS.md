@@ -12,7 +12,6 @@ Before changing code:
 
    - `docs/ARCHITECTURE.md` for profile lookup, inheritance, diff modes, and output invariants.
    - `docs/DEVELOPMENT.md` for tests, fixtures, smoke checks, and change checklists.
-   - `docs/BAMBU_PROFILE_DIFF_CODEX_HANDOFF.md` only for historical product research and possible future ideas; it is not current implementation guidance.
 
 ## Repository map
 
