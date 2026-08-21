@@ -1,5 +1,7 @@
 # Bambu / Orca Filament Profile Diff — Codex Handoff
 
+> **Historical document:** This is the original research and implementation handoff. Its file hash, current-capability list, proposed work, and test recommendations may be stale. Use the [README](../README.md) for current CLI behavior, [ARCHITECTURE.md](ARCHITECTURE.md) for implementation invariants, and [DEVELOPMENT.md](DEVELOPMENT.md) for current verification steps.
+
 ## Project goal
 
 Build a practical multi-way diff tool for Bambu Studio and OrcaSlicer filament profiles.

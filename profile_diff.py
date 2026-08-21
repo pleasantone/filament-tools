@@ -13,6 +13,7 @@ Highlights
 - Search profile names case-insensitively with --find-profile.
 - Select per-profile machine/nozzle combinations with repeated --select.
 - Show where effective values came from with --show-source.
+- Audit each profile's explicit overrides against its parent with --mode overrides.
 - Filter parameters by semantic group with --group.
 - Output terminal table, CSV, or a grouped self-contained HTML viewer.
 """
@@ -59,6 +60,25 @@ class EffectiveProfile:
     values: Dict[str, Any]
     sources: Dict[str, str]
     chain: List[str]
+
+
+@dataclass(frozen=True)
+class OverrideRow:
+    key: str
+    explicit_value: str
+    parent_value: str
+    difference: str
+    parent_source: str
+
+
+@dataclass
+class OverrideReport:
+    profile: Profile
+    label: str
+    parent: Optional[EffectiveProfile]
+    parent_status: str
+    parent_error: Optional[str]
+    rows: List[OverrideRow]
 
 
 @dataclass(frozen=True)
@@ -180,6 +200,23 @@ def source_kind_for_path(path: Path) -> str:
     return "other"
 
 
+def profile_copy_key(profile: Profile) -> Optional[Tuple[str, Tuple[str, ...]]]:
+    """Identify the same managed profile below system and bundled roots."""
+    kind = source_kind_for_path(profile.path)
+    parts = [part.casefold() for part in profile.path.parts]
+    if kind == "system":
+        marker = len(parts) - 1 - parts[::-1].index("system")
+    elif kind == "bundled":
+        marker_name = "profiles" if "profiles" in parts else "resources"
+        marker = len(parts) - 1 - parts[::-1].index(marker_name)
+    else:
+        return None
+    relative_path = tuple(parts[marker + 1 :])
+    if not relative_path:
+        return None
+    return app_label_for_path(profile.path).casefold(), relative_path
+
+
 def _possible_executable_dirs(names: Sequence[str]) -> List[Path]:
     out: List[Path] = []
     for name in names:
@@ -297,6 +334,7 @@ class ProfileIndex:
         self.by_name: Dict[str, List[Path]] = {}
         self.by_stem: Dict[str, List[Path]] = {}
         self.by_path: Dict[Path, Profile] = {}
+        self.warned_copy_differences: set[Tuple[Path, Path]] = set()
         self.search_dirs = _unique_existing(search_dirs)
         self._index()
 
@@ -356,6 +394,63 @@ class ProfileIndex:
             scored.append((score, prof.name.casefold(), rp))
         scored.sort(key=lambda x: (x[0], x[1], str(x[2]).casefold()))
         return [self.by_path[p] for _, _, p in scored[:limit]]
+
+    def _prefer_system_copies(self, candidates: Sequence[Profile]) -> List[Profile]:
+        """Collapse corresponding system/bundled copies to the system profile."""
+        groups: Dict[Tuple[str, Tuple[str, ...]], List[Profile]] = {}
+        ungrouped: List[Profile] = []
+        for profile in candidates:
+            key = profile_copy_key(profile)
+            if key is None:
+                ungrouped.append(profile)
+            else:
+                groups.setdefault(key, []).append(profile)
+
+        preferred = list(ungrouped)
+        for profiles in groups.values():
+            system_profiles = [
+                profile
+                for profile in profiles
+                if source_kind_for_path(profile.path) == "system"
+            ]
+            bundled_profiles = [
+                profile
+                for profile in profiles
+                if source_kind_for_path(profile.path) == "bundled"
+            ]
+            if len(system_profiles) != 1 or not bundled_profiles:
+                preferred.extend(profiles)
+                continue
+
+            system_profile = system_profiles[0]
+            preferred.append(system_profile)
+            for bundled_profile in bundled_profiles:
+                system_json = json.dumps(
+                    system_profile.data,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                bundled_json = json.dumps(
+                    bundled_profile.data,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                warning_key = (system_profile.path, bundled_profile.path)
+                if (
+                    system_json != bundled_json
+                    and warning_key not in self.warned_copy_differences
+                ):
+                    print(
+                        "warning: system and bundled profile copies differ; "
+                        "preferring system copy:\n"
+                        f"  system: {system_profile.path}\n"
+                        f"  bundled: {bundled_profile.path}",
+                        file=sys.stderr,
+                    )
+                    self.warned_copy_differences.add(warning_key)
+        return preferred
 
     def _effective_value(self, profile: Profile, key: str, seen: Optional[set[Path]] = None) -> Any:
         """Resolve one key through the inheritance chain."""
@@ -423,7 +518,7 @@ class ProfileIndex:
                 )
             return prof
 
-        candidates = self.search_names(spec, limit=500)
+        candidates = self._prefer_system_copies(self.search_names(spec, limit=500))
         if machine or nozzle:
             candidates = [p for p in candidates if self.compatible_with(p, machine, nozzle)]
         if not candidates:
@@ -480,8 +575,16 @@ class ProfileIndex:
             if len(preferred) == 1:
                 return self.load_path(preferred[0])
 
+        if matches:
+            preferred_copies = self._prefer_system_copies(
+                [self.load_path(match) for match in matches]
+            )
+            if len(preferred_copies) == 1:
+                return preferred_copies[0]
+            matches = [profile.path for profile in preferred_copies]
+
         if not matches:
-            fuzzy = self.search_names(spec)
+            fuzzy = self._prefer_system_copies(self.search_names(spec))
             if len(fuzzy) == 1:
                 return fuzzy[0]
             if fuzzy:
@@ -580,6 +683,105 @@ def collect_rows(
     return rows
 
 
+def collect_override_reports(
+    profiles: Sequence[Profile],
+    labels: Sequence[str],
+    index: ProfileIndex,
+    include_meta: bool,
+    key_pattern: Optional[re.Pattern[str]],
+    only_different: bool,
+    groups: Optional[set[str]] = None,
+) -> List[OverrideReport]:
+    """Compare each profile's explicit keys with its immediate parent's effective values."""
+    cache: Dict[Path, EffectiveProfile] = {}
+    reports: List[OverrideReport] = []
+
+    for profile, label in zip(profiles, labels):
+        parent: Optional[EffectiveProfile] = None
+        parent_error: Optional[str] = None
+
+        if not profile.inherits:
+            parent_status = "NO PARENT: profile does not declare inherits"
+        else:
+            try:
+                parent_profile = index.find(profile.inherits, prefer_dir=profile.path.parent)
+                parent = resolve_effective(parent_profile, index, cache)
+                parent_status = (
+                    f"{parent.profile.name} (effective chain: {' -> '.join(parent.chain)})"
+                )
+            except FileNotFoundError as exc:
+                parent_error = f"MISSING PARENT {profile.inherits!r}: {exc}"
+                parent_status = parent_error
+            except RuntimeError as exc:
+                if "inheritance cycle" in str(exc).casefold():
+                    parent_error = f"INHERITANCE CYCLE: {exc}"
+                else:
+                    parent_error = f"PARENT ERROR {profile.inherits!r}: {exc}"
+                parent_status = parent_error
+            except Exception as exc:
+                parent_error = f"PARENT ERROR {profile.inherits!r}: {exc}"
+                parent_status = parent_error
+
+        keys = set(profile.data)
+        if not include_meta:
+            keys -= META_KEYS_DEFAULT
+
+        rows: List[OverrideRow] = []
+        for key in sorted(keys):
+            if key_pattern and not key_pattern.search(key):
+                continue
+            if groups and group_for_key(key) not in groups:
+                continue
+
+            explicit_value = canonical(profile.data[key])
+            if parent_error:
+                parent_value = "unavailable"
+                parent_source = "unavailable"
+                difference = "unavailable"
+            elif parent is None:
+                parent_value = "∅"
+                parent_source = ""
+                difference = "no parent"
+            elif key not in parent.values:
+                parent_value = "∅"
+                parent_source = ""
+                difference = "added"
+            else:
+                inherited_value = parent.values[key]
+                parent_value = canonical(inherited_value)
+                parent_source = parent.sources.get(key, "")
+                same_value = (
+                    type(profile.data[key]) is type(inherited_value)
+                    and profile.data[key] == inherited_value
+                )
+                difference = "same" if same_value else "changed"
+
+            if only_different and difference == "same":
+                continue
+            rows.append(
+                OverrideRow(
+                    key=key,
+                    explicit_value=explicit_value,
+                    parent_value=parent_value,
+                    difference=difference,
+                    parent_source=parent_source,
+                )
+            )
+
+        reports.append(
+            OverrideReport(
+                profile=profile,
+                label=label,
+                parent=parent,
+                parent_status=parent_status,
+                parent_error=parent_error,
+                rows=rows,
+            )
+        )
+
+    return reports
+
+
 def shorten(s: str, width: int) -> str:
     s = s.replace("\n", "\\n")
     return s if len(s) <= width else s[: max(1, width - 1)] + "…"
@@ -601,6 +803,46 @@ def terminal_table(names: Sequence[str], rows, show_source: bool, width: int) ->
     return "\n".join(out)
 
 
+def terminal_override_report(reports: Sequence[OverrideReport], width: int) -> str:
+    value_width = max(12, width)
+    blocks: List[str] = []
+
+    for report in reports:
+        key_width = min(max([len(row.key) for row in report.rows] + [9]), 42)
+        widths = [key_width, value_width, value_width, 12, value_width]
+
+        def line(parts):
+            return " | ".join(
+                shorten(str(value), column_width).ljust(column_width)
+                for value, column_width in zip(parts, widths)
+            )
+
+        block = [
+            f"Profile: {report.label}",
+            f"File: {report.profile.path}",
+            f"Parent: {report.parent_status}",
+            line(["parameter", "explicit value", "parent effective", "difference", "parent source"]),
+            "-+-".join("-" * column_width for column_width in widths),
+        ]
+        for row in report.rows:
+            block.append(
+                line(
+                    [
+                        row.key,
+                        row.explicit_value,
+                        row.parent_value,
+                        row.difference,
+                        row.parent_source,
+                    ]
+                )
+            )
+        if not report.rows:
+            block.append("(no explicit keys matched the filters)")
+        blocks.append("\n".join(block))
+
+    return "\n\n".join(blocks)
+
+
 def write_csv(path: Path, names: Sequence[str], rows, show_source: bool) -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
@@ -617,6 +859,51 @@ def write_csv(path: Path, names: Sequence[str], rows, show_source: bool) -> None
                 if show_source:
                     row.append(s)
             w.writerow(row)
+
+
+def write_overrides_csv(path: Path, reports: Sequence[OverrideReport]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "profile",
+                "profile path",
+                "parent status",
+                "parameter",
+                "explicit value",
+                "parent effective value",
+                "difference",
+                "parent source",
+            ]
+        )
+        for report in reports:
+            if not report.rows:
+                writer.writerow(
+                    [
+                        report.label,
+                        report.profile.path,
+                        report.parent_status,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+                continue
+            for row in report.rows:
+                writer.writerow(
+                    [
+                        report.label,
+                        report.profile.path,
+                        report.parent_status,
+                        row.key,
+                        row.explicit_value,
+                        row.parent_value,
+                        row.difference,
+                        row.parent_source,
+                    ]
+                )
 
 
 def write_html(path: Path, names: Sequence[str], rows, effective: Sequence[EffectiveProfile], mode: str, show_source: bool) -> None:
@@ -737,6 +1024,81 @@ sourceToggle.addEventListener('change', () => {{
     path.write_text(doc, encoding="utf-8")
 
 
+def write_overrides_html(path: Path, reports: Sequence[OverrideReport]) -> None:
+    def esc(value: Any) -> str:
+        return html.escape(str(value))
+
+    sections: List[str] = []
+    total_rows = 0
+    for report in reports:
+        total_rows += len(report.rows)
+        body = []
+        for row in report.rows:
+            difference_class = html.escape(row.difference.replace(" ", "-"), quote=True)
+            body.append(
+                '<tr class="parameter-row" '
+                f'data-parameter="{html.escape(row.key.casefold(), quote=True)}">'
+                f'<th scope="row">{esc(row.key)}</th>'
+                f'<td><code>{esc(row.explicit_value)}</code></td>'
+                f'<td><code>{esc(row.parent_value)}</code></td>'
+                f'<td class="difference {difference_class}">{esc(row.difference)}</td>'
+                f'<td>{esc(row.parent_source)}</td></tr>'
+            )
+        if not body:
+            body.append(
+                '<tr><td colspan="5" class="empty">'
+                "No explicit keys matched the filters.</td></tr>"
+            )
+        error_class = " parent-error" if report.parent_error else ""
+        sections.append(
+            f'<section class="profile{error_class}">'
+            f'<h2>{esc(report.label)}</h2>'
+            f'<div class="path">{esc(report.profile.path)}</div>'
+            f'<div class="parent"><b>Parent:</b> {esc(report.parent_status)}</div>'
+            '<div class="table-wrap"><table><thead><tr>'
+            '<th>Parameter</th><th>Explicit value</th><th>Parent effective value</th>'
+            '<th>Difference</th><th>Parent source</th>'
+            '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div></section>"
+        )
+
+    document = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bambu/Orca profile overrides</title>
+<style>
+:root {{ color-scheme: light dark; --background: #f7f8fa; --panel: #fff; --text: #18202b; --muted: #667085; --border: #d8dee8; --accent: #0b6bcb; --error: #b42318; --sticky: #f2f5f9; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --background: #11151b; --panel: #1a2029; --text: #edf2f7; --muted: #a6b0bf; --border: #3a4554; --accent: #69b3ff; --error: #ff8a80; --sticky: #222a35; }} }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--background); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }}
+main {{ max-width: 1500px; margin: 0 auto; padding: 28px; }}
+h1 {{ margin-bottom: 6px; }} .summary, .path {{ color: var(--muted); }}
+#parameter-search {{ width: min(560px, 100%); padding: 9px 11px; margin: 10px 0 18px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); }}
+.profile {{ margin-bottom: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }}
+.profile h2 {{ margin: 0 0 4px; font-size: 18px; }} .parent {{ margin: 8px 0 12px; overflow-wrap: anywhere; }} .parent-error .parent {{ color: var(--error); }}
+.table-wrap {{ max-height: 70vh; overflow: auto; border: 1px solid var(--border); border-radius: 7px; }}
+table {{ width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }}
+th, td {{ padding: 9px; text-align: left; vertical-align: top; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }}
+thead th {{ position: sticky; top: 0; z-index: 2; background: var(--sticky); }}
+th:first-child {{ position: sticky; left: 0; z-index: 1; background: var(--sticky); }} thead th:first-child {{ z-index: 3; }}
+tr > *:last-child {{ border-right: 0; }} tbody tr:last-child > * {{ border-bottom: 0; }} code {{ white-space: pre-wrap; font-size: 12px; }}
+.difference.changed, .difference.added {{ color: var(--accent); font-weight: 700; }} .difference.unavailable {{ color: var(--error); font-weight: 700; }} .empty {{ color: var(--muted); }}
+@media (max-width: 760px) {{ main {{ padding: 14px; }} table {{ min-width: 760px; }} }}
+</style></head><body><main>
+<h1>Bambu/Orca explicit profile overrides</h1>
+<p class="summary">Mode: <b>overrides</b> · {total_rows} explicit parameters · {len(reports)} profiles</p>
+<input id="parameter-search" type="search" placeholder="Filter parameters or values…" aria-label="Filter parameters or values">
+<div id="profiles">{"".join(sections)}</div>
+</main><script>
+const search = document.getElementById('parameter-search');
+search.addEventListener('input', () => {{
+  const query = search.value.trim().toLocaleLowerCase();
+  document.querySelectorAll('.parameter-row').forEach(row => {{
+    row.hidden = Boolean(query) && !row.textContent.toLocaleLowerCase().includes(query);
+  }});
+}});
+</script></body></html>"""
+    path.write_text(document, encoding="utf-8")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Multi-way diff for Bambu Studio / OrcaSlicer filament profiles.")
     ap.add_argument(
@@ -754,7 +1116,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--list-search-paths", action="store_true", help="Print auto-discovered search paths and exit.")
     ap.add_argument("--no-auto-discover", action="store_true", help="Disable standard Bambu Studio / OrcaSlicer path discovery.")
     ap.add_argument("--app", choices=["both", "bambu", "orca"], default="both", help="Limit automatic discovery (default: both).")
-    ap.add_argument("--mode", choices=["effective", "raw"], default="effective")
+    ap.add_argument(
+        "--mode",
+        choices=["effective", "raw", "overrides"],
+        default="effective",
+        help=(
+            "effective values (default), raw JSON keys, or each profile's explicit "
+            "keys compared with its parent's effective values"
+        ),
+    )
     ap.add_argument("--only-different", action="store_true")
     ap.add_argument("--include-meta", action="store_true")
     ap.add_argument("--keys", help="Regex applied to parameter names.")
@@ -782,10 +1152,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except ValueError as e:
         ap.error(str(e))
 
-    if not args.find_profile and len(selectors) < 2:
-        ap.error(
-            "provide at least two --select values, or use --find-profile"
-        )
+    minimum_selections = 1 if args.mode == "overrides" else 2
+    if not args.find_profile and len(selectors) < minimum_selections:
+        if args.mode == "overrides":
+            ap.error("provide at least one --select value, or use --find-profile")
+        ap.error("provide at least two --select values, or use --find-profile")
 
     search_dirs = [Path(os.path.expanduser(x)) for x in args.search_dir]
     for spec in (selector.spec for selector in selectors):
@@ -867,16 +1238,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         profiles = unique_profiles
         selection_labels = unique_labels
 
-        if len(profiles) < 2:
-            raise RuntimeError("Selection resolved to fewer than two distinct profiles.")
+        if len(profiles) < minimum_selections:
+            required = "one" if minimum_selections == 1 else "two"
+            raise RuntimeError(
+                f"Selection resolved to fewer than {required} distinct profiles."
+            )
 
         cache: Dict[Path, EffectiveProfile] = {}
-        effective = [resolve_effective(p, index, cache) for p in profiles]
+        effective = (
+            []
+            if args.mode == "overrides"
+            else [resolve_effective(p, index, cache) for p in profiles]
+        )
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    if args.list_chain:
+    if args.list_chain and args.mode != "overrides":
         for e in effective:
             print(f"{e.profile.name}: {' -> '.join(e.chain)}")
         print()
@@ -887,6 +1265,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"error: invalid --keys regular expression: {e}", file=sys.stderr)
         return 2
     selected_groups = set(args.group) if args.group else None
+    names = selection_labels
+
+    if args.mode == "overrides":
+        reports = collect_override_reports(
+            profiles,
+            names,
+            index,
+            args.include_meta,
+            pattern,
+            args.only_different,
+            selected_groups,
+        )
+        if args.list_chain:
+            for report in reports:
+                if report.parent:
+                    chain = [*report.parent.chain, report.profile.name]
+                    print(f"{report.profile.name}: {' -> '.join(chain)}")
+                else:
+                    print(f"{report.profile.name}: {report.parent_status}")
+            print()
+        for report in reports:
+            if report.parent_error:
+                print(f"warning: {report.label}: {report.parent_error}", file=sys.stderr)
+        print(terminal_override_report(reports, args.width))
+
+        if args.csv:
+            write_overrides_csv(args.csv, reports)
+            print(f"\nWrote CSV: {args.csv}")
+        if args.html:
+            write_overrides_html(args.html, reports)
+            print(f"Wrote HTML: {args.html}")
+        return 0
+
     rows = collect_rows(
         profiles,
         effective,
@@ -896,7 +1307,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.only_different,
         selected_groups,
     )
-    names = selection_labels
     print(terminal_table(names, rows, args.show_source, args.width))
 
     if args.csv:

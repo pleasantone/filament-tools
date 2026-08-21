@@ -57,7 +57,7 @@ python profile_diff.py \
   --show-source
 ```
 
-At least two `--select` values are required. If an exact name is ambiguous across apps or variants, the program prints the matching files rather than silently picking one. An exact JSON path is always accepted.
+At least two `--select` values are required for `effective` and `raw` comparisons. Override reports accept one or more selections because each profile is compared with its own parent. When the same managed profile exists in both an application's `system` and bundled `resources/profiles` trees, automatic selection uses the system copy. If their parsed JSON differs, a warning on stderr shows both paths. Other exact-name ambiguities across apps or variants still print the matching files rather than silently picking one. An exact JSON path is always accepted.
 
 ## Effective vs raw diff
 
@@ -71,6 +71,45 @@ python profile_diff.py ... --mode effective --show-source
 
 ```bash
 python profile_diff.py ... --mode raw
+```
+
+## Audit explicit overrides
+
+`--mode overrides` produces a separate report for every selected profile. Each report contains only keys physically set on that profile and shows:
+
+- the profile's explicit value
+- the immediate parent's effective value after recursively resolving its inheritance
+- whether the explicit value is `changed`, `same`, or `added`
+- the ancestor profile that supplied the parent value
+
+Unlike the multi-way modes, a single selection is enough:
+
+```bash
+python profile_diff.py \
+  --select "My PETG retuned" \
+  --mode overrides
+```
+
+Audit several profiles in one command and hide redundant overrides whose value is identical to the parent:
+
+```bash
+python profile_diff.py \
+  --select "My PETG original;label=Original" \
+  --select "My PETG retuned;label=Retuned" \
+  --mode overrides \
+  --only-different \
+  --keys 'temperature|flow|counter_'
+```
+
+Sources are always included in override reports, so `--show-source` is unnecessary in this mode. Filters from `--keys`, `--group`, and `--include-meta` still apply. In override mode, `--only-different` removes only explicit values that equal the parent's effective value; added values remain visible.
+
+A root profile is labeled `NO PARENT`. If a declared parent is missing or an inheritance cycle prevents resolution, the report remains usable: explicit child keys are still listed, the parent status names the problem, and the parent value, difference, and source are marked `unavailable`.
+
+Override reports support the same file outputs:
+
+```bash
+python profile_diff.py --select "My PETG retuned" --mode overrides --csv overrides.csv
+python profile_diff.py --select "My PETG retuned" --mode overrides --html overrides.html
 ```
 
 ## Filter parameters
@@ -151,3 +190,10 @@ python profile_diff.py --list-groups
 ```
 
 The groups are `identity`, `compatibility`, `temperature`, `flow`, `cooling`, `retraction`, `ams`, `dimensional`, `material`, `gcode`, and `other`. Metadata remains hidden unless `--include-meta` is supplied, even when `--group identity` is selected.
+
+## Maintainer documentation
+
+- [`AGENTS.md`](AGENTS.md) contains the repository-wide contribution rules and required checks.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains profile indexing, inheritance resolution, diff-mode semantics, filtering, and renderer contracts.
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers the test strategy, fixture conventions, smoke commands, and change checklists.
+- [`docs/BAMBU_PROFILE_DIFF_CODEX_HANDOFF.md`](docs/BAMBU_PROFILE_DIFF_CODEX_HANDOFF.md) is a historical research and design snapshot. It is retained for context but is not authoritative for current behavior.

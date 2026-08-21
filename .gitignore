@@ -1,0 +1,43 @@
+# macOS filesystem metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Virtual environments and package builds
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Editor-local files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local environment files; keep a shareable example if one is added
+.env
+.env.*
+!.env.example
+
+# Generated comparison reports and smoke-test artifacts
+/artifacts/
