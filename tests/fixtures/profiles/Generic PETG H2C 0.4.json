@@ -1,0 +1,8 @@
+{
+  "name": "Generic PETG H2C 0.4",
+  "type": "filament",
+  "inherits": "Synthetic PETG Common",
+  "instantiation": "true",
+  "compatible_printers": ["Bambu Lab H2C 0.4 nozzle"],
+  "filament_max_volumetric_speed": ["15"]
+}

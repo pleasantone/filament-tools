@@ -1,0 +1,10 @@
+{
+  "name": "Bambu PETG HF H2C 0.6",
+  "type": "filament",
+  "inherits": "Synthetic PETG Common",
+  "instantiation": "true",
+  "compatible_printers": ["Bambu Lab H2C 0.6 nozzle"],
+  "nozzle_temperature": ["260"],
+  "counter_coef_2": ["0.0062"],
+  "filament_max_volumetric_speed": ["28"]
+}
