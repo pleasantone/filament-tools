@@ -67,7 +67,8 @@ UV_CACHE_DIR=/private/tmp/filament-tools-uv-cache \
   editor --host 127.0.0.1 --port 8765
 ```
 
-The five-profile fixture catalog was used to exercise:
+The deterministic fixture catalog contains five filament profiles plus two
+machine presets and was used to exercise:
 
 - raw and effective inspection;
 - a two-profile Generic PETG/Bambu PETG HF comparison;

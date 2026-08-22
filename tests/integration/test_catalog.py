@@ -10,6 +10,16 @@ from tests.support import SRC, write_profile  # noqa: F401
 
 
 class CatalogIntegrationTests(unittest.TestCase):
+    def test_fixture_catalog_exposes_printer_search_options(self) -> None:
+        fixture_profiles = Path(__file__).parents[1] / "fixtures" / "profiles"
+        workbench = ProfileWorkbench(ProfileCatalog([fixture_profiles]))
+
+        page = workbench.printer_options("h2c", limit=1)
+
+        self.assertEqual(page["results"], ["Bambu Lab H2C 0.4 nozzle"])
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["limit"], 1)
+
     def test_system_copy_wins_and_difference_warns(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "BambuStudio"

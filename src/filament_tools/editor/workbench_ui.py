@@ -7,7 +7,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import FastAPI
 from nicegui import core, events, ui
@@ -67,6 +67,47 @@ def _numeric_delta(baseline: Any, value: Any) -> Optional[str]:
     if before is None or after is None or before == after:
         return None
     return f"{after - before:+g}"
+
+
+class CompatibilitySeedState:
+    """Track source-derived compatibility without overwriting user choices."""
+
+    def __init__(self) -> None:
+        self.seeded_values: Optional[tuple[str, ...]] = None
+
+    def accept_source_values(
+        self, current: Sequence[str], source_values: Sequence[str]
+    ) -> Optional[List[str]]:
+        current_values = tuple(str(value) for value in current)
+        if self.seeded_values is None:
+            if current_values:
+                return None
+        elif current_values != self.seeded_values:
+            return None
+        values = list(
+            dict.fromkeys(str(value).strip() for value in source_values if str(value).strip())
+        )
+        self.seeded_values = tuple(values)
+        return values
+
+    def reset(self) -> None:
+        self.seeded_values = None
+
+
+class SeededStringState:
+    """Distinguish an automatic string value from an explicit user value."""
+
+    def __init__(self) -> None:
+        self.seeded_value: Optional[str] = None
+
+    def should_replace(self, current: str) -> bool:
+        return not current or (self.seeded_value is not None and current == self.seeded_value)
+
+    def record(self, value: str) -> None:
+        self.seeded_value = value
+
+    def reset(self) -> None:
+        self.seeded_value = None
 
 
 class WorkbenchSession:
@@ -152,6 +193,8 @@ def _add_global_styles() -> None:
 
 def render_workbench(workbench: ProfileWorkbench) -> None:
     state = WorkbenchSession(workbench)
+    compatibility_seed = CompatibilitySeedState()
+    output_name_seed = SeededStringState()
     variant_rows: List[Dict[str, Any]] = []
     printer_option_map: Dict[str, str] = {}
     _add_global_styles()
@@ -1047,30 +1090,38 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     with ui.dialog() as quick_start_dialog, ui.card().classes("w-full max-w-2xl"):
         ui.label("Create a filament profile").classes("text-xl font-bold")
         ui.label(
-            "A short guided path through comparison, composition, and a safe install preview."
+            "Combine settings from existing profiles, then validate the result before saving or installing it."
         ).classes("ft-muted")
         for number, title, detail in (
-            (1, "Choose a starting filament", "Use Library search or an exact JSON path."),
+            (
+                1,
+                "Choose a starting profile",
+                "This supplies every setting unless you explicitly replace it.",
+            ),
             (
                 2,
-                "Add a faster donor",
-                "Compare it with the starting profile and keep only differences.",
+                "Add reference profiles",
+                "Add profiles whose settings you want to compare or reuse.",
             ),
-            (3, "Choose one setting", "Click a donor temperature or flow cell in Create profile."),
+            (
+                3,
+                "Compare the differences",
+                "Hide unchanged settings so the meaningful choices are easier to find.",
+            ),
             (
                 4,
-                "Review provenance",
-                "Selected via is your choice; defined by is the ancestor supplying the value.",
+                "Choose the settings you want",
+                "Keep the starting value or select a value from any reference profile.",
             ),
             (
                 5,
-                "Preview both outputs",
-                "Sparse inherits unchanged behavior; full output is AMS-compatible and standalone.",
+                "Choose an output type",
+                "Sparse profiles inherit from a parent. Full profiles are standalone and require material identity and printer compatibility.",
             ),
             (
                 6,
-                "Preview installation",
-                "Review destinations without writing, then install only if the plan is current.",
+                "Preview before writing",
+                "Validate the profile and review its installation destination. Nothing is written until you choose Install.",
             ),
         ):
             with ui.row().classes("w-full items-start gap-3"):
@@ -1184,14 +1235,19 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         return variants
 
     def populate_compatibility_from_source() -> None:
-        if not starting_source.value or compatibility.value:
+        if not starting_source.value:
             return
         try:
             source = workbench.resolver.resolve_selector(str(starting_source.value))
             compatible = source.values.get("compatible_printers", [])
             if not isinstance(compatible, list):
                 return
-            values = [str(value) for value in compatible if str(value).strip()]
+            values = compatibility_seed.accept_source_values(
+                [str(value) for value in compatibility.value or []],
+                compatible,
+            )
+            if values is None:
+                return
             for value in values:
                 printer_option_map.setdefault(value, value)
             compatibility.set_options(printer_option_map, value=values)
@@ -1422,7 +1478,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
 
     def perform_source_load() -> None:
         replace_sources_dialog.close()
+        replace_output_name = output_name_seed.should_replace(str(output_name.value or ""))
+        if replace_output_name:
+            output_name.value = ""
         refresh_composition(reset=True)
+        if replace_output_name:
+            output_name_seed.record(str(output_name.value or ""))
         populate_compatibility_from_source()
         invalidate_recipe("source change")
 
@@ -1689,10 +1750,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         starting_source.value = recipe.starting_source
         reference_sources.value = recipe.reference_sources
         sparse_parent.value = recipe.sparse_parent or recipe.starting_source
+        output_name_seed.reset()
         output_name.value = recipe.name
         output_mode.value = recipe.output_mode.value
         identity_mode.value = recipe.identity_mode.value
         explicit_id.value = recipe.filament_id or ""
+        compatibility_seed.reset()
         for printer in recipe.compatible_printers or []:
             printer_option_map.setdefault(printer, printer)
         compatibility.set_options(printer_option_map, value=list(recipe.compatible_printers or []))
