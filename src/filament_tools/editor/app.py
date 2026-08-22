@@ -76,8 +76,17 @@ def _artifact_json(artifact: Any) -> Dict[str, Any]:
     }
 
 
-def create_editor_app(workbench: ProfileWorkbench) -> FastAPI:
-    app = FastAPI(title="Filament Tools Profile Editor", version="0.2.0")
+def create_editor_app(
+    workbench: ProfileWorkbench,
+    *,
+    target: Optional[FastAPI] = None,
+    mount_ui: bool = True,
+) -> FastAPI:
+    app = (
+        target
+        if target is not None
+        else FastAPI(title="Filament Tools Profile Editor", version="0.2.0")
+    )
 
     @app.get("/api/profiles")
     def profiles(
@@ -322,8 +331,9 @@ def create_editor_app(workbench: ProfileWorkbench) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    from filament_tools.editor.workbench_ui import mount_workbench
+    if mount_ui:
+        from filament_tools.editor.workbench_ui import mount_workbench
 
-    mount_workbench(app, workbench)
+        mount_workbench(app, workbench)
 
     return app

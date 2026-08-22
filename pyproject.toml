@@ -18,6 +18,12 @@ dependencies = [
     "uvicorn>=0.35,<1",
 ]
 
+[project.optional-dependencies]
+desktop = [
+    "nicegui[native]>=3.12,<4",
+    "pyinstaller>=6.20,<7",
+]
+
 [dependency-groups]
 dev = [
     "httpx>=0.28,<1",
@@ -27,6 +33,7 @@ dev = [
 
 [project.scripts]
 filament-tools = "filament_tools.cli.main:run"
+filament-tools-desktop = "filament_tools.desktop:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/filament_tools"]

@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from fastapi import FastAPI
+
 from tests.support import SRC, root_profile, write_profile  # noqa: F401
 
 try:
@@ -17,6 +19,25 @@ from filament_tools.service import ProfileWorkbench
 
 @unittest.skipIf(TestClient is None, "FastAPI development dependencies are not installed")
 class EditorIntegrationTests(unittest.TestCase):
+    def test_routes_can_mount_without_server_workbench_ui(self) -> None:
+        from filament_tools.editor.app import create_editor_app
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            write_profile(directory, "Editor PETG", root_profile("Editor PETG"))
+            target = FastAPI()
+
+            result = create_editor_app(
+                ProfileWorkbench(ProfileCatalog([directory])),
+                target=target,
+                mount_ui=False,
+            )
+            client = TestClient(result)
+
+            self.assertIs(result, target)
+            self.assertEqual(client.get("/api/profiles").status_code, 200)
+            self.assertEqual(client.get("/").status_code, 404)
+
     def test_catalog_profile_and_preview_endpoints(self) -> None:
         from filament_tools.editor.app import create_editor_app
 

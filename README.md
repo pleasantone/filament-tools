@@ -254,6 +254,21 @@ leaving a page with unsaved work. **Quick start** opens the guided six-step
 walkthrough and terminology reference; it opens automatically on first use and
 remains available from the header.
 
+### Local macOS application
+
+On Apple Silicon Macs, build a self-contained local application bundle with:
+
+```bash
+./scripts/build_macos_app.sh
+```
+
+The command creates `dist/Filament Tools.app`. It bundles Python, NiceGUI, and
+the native webview runtime, uses the same automatic Bambu Studio and OrcaSlicer
+profile discovery as the CLI, and is ad-hoc signed for local use. The app writes
+startup diagnostics to `~/Library/Logs/Filament Tools/filament-tools.log` and
+keeps its webview workspace data under `~/Library/Application Support/Filament
+Tools/WebView`. This local build is not notarized or intended for redistribution.
+
 ## Maintainer documentation
 
 - [`docs/PRODUCT_ARCHITECTURE.md`](docs/PRODUCT_ARCHITECTURE.md) records the

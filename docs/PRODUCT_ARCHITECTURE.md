@@ -141,6 +141,7 @@ The product is expected to provide all of the following:
 - installation preview, root/child routing, validation, and transaction rollback;
 - Bambu Studio default installation and optional OrcaSlicer installation;
 - local multi-view filament workbench backed by the same services;
+- local Apple Silicon application wrapper around that workbench;
 - multi-source settings and semantic-group composition with undo/redo;
 - one-click recipe switching between sparse inherited and full AMS output;
 - catalog-wide ancestor/descendant forest with broken-link visibility;
@@ -174,7 +175,8 @@ refactored release.
 ### Operations and quality
 
 - Live slicer restart/reload detection when a platform exposes it safely.
-- Signed release artifacts and platform launchers.
+- Signed release artifacts and distributable platform launchers. A local,
+  ad-hoc-signed Apple Silicon launcher exists independently of this roadmap item.
 - A lockfile and automated dependency updates.
 - Property-based tests for inheritance and sparse/root round trips.
 - Golden fixtures harvested from multiple slicer versions.

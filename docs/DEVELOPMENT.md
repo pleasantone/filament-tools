@@ -66,6 +66,23 @@ uv run filament-tools --no-auto-discover \
 Write generated profiles/reports to a temporary directory or ignored
 `artifacts/`. Do not leave caches or reports in the repository.
 
+## Local macOS application
+
+Run `./scripts/build_macos_app.sh` on an Apple Silicon Mac to create the ignored
+`dist/Filament Tools.app` bundle. The script installs the `desktop` optional
+dependencies through uv, generates the `.icns` file from the checked-in SVG,
+packages a windowed `onedir` application with NiceGUI/PyInstaller, adds local
+bundle metadata, and applies an ad-hoc signature. It does not notarize, sandbox,
+or prepare the application for redistribution.
+
+After desktop-launcher or packaging changes, open the generated app and verify
+catalog discovery plus the Library, Compare, Create profile, Review & install,
+and Lineage explorer surfaces. Inspect
+`~/Library/Logs/Filament Tools/filament-tools.log` if startup fails.
+Confirm that dismissing Quick start persists after quitting and reopening the
+app; native webview state lives under
+`~/Library/Application Support/Filament Tools/WebView`.
+
 ## Change checklist
 
 For domain behavior:
