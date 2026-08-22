@@ -1,7 +1,7 @@
 # UI/UX audit handoff
 
 **Audit date:** 2026-08-21
-**Status:** P0 implementation complete; phased enhancement backlog remains
+**Status:** P0 and guided-output/help batches implemented; later roadmap remains
 **Scope:** Local NiceGUI profile workbench, including catalog discovery,
 inspection, comparison, lineage, composition, sparse/root generation, project
 persistence, validation, export, and installation
@@ -19,9 +19,11 @@ The original audit changed no application code. Its P0 handoff was implemented
 on 2026-08-21 with server-side filtered catalog windows, scoped lineage queries,
 a full-width direct-donor composer, revision-bound preview/install state,
 unsaved-work protection, progressive output controls, and updated regression and
-browser verification. The later editing-intelligence, profile-maintenance,
-cross-slicer, first-run walkthrough, and richer installed-profile operations in
-this document remain roadmap items.
+browser verification. A following guided-output/help batch added exact
+printer-preset search and source seeding, structured material-family variants,
+contextual terminology help, and a persistent first-run walkthrough. The later
+editing-intelligence, profile-maintenance, cross-slicer, and richer
+installed-profile operations in this document remain roadmap items.
 
 ## Product context
 

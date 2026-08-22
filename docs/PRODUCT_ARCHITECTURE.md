@@ -107,6 +107,11 @@ The editor is a local FastAPI/NiceGUI application with five connected surfaces:
 5. **Lineage explorer**: scoped ancestors/immediate dependents, bounded
    descendants, and an explicit catalog-wide problems view.
 
+The header exposes a browser-persistent first-run walkthrough and terminology
+reference. Full-output controls use searchable exact printer-preset selections
+and structured family-variant rows; the browser does not parse a separate
+variant mini-language.
+
 The browser is an adapter, not the owner of profile semantics. API endpoints
 load recipes and drafts, compare profiles, expose lineage, preview
 sparse/root/family outputs, validate them, save/load projects, and preview or

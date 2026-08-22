@@ -240,7 +240,9 @@ and a **full AMS-compatible profile**. Switching modes preserves every setting
 selection. Sparse output requires an inheritance parent and contains only its
 behavioral delta. Full output contains all effective behavior, removes
 `inherits`, and applies the selected material-identity and exact compatibility
-policy. Optional family variants use `NAME::PRINTER|PRINTER` lines.
+policy. Full-output compatibility uses searchable exact printer-preset chips;
+optional family variants use structured name and compatibility rows and share
+one material identity.
 
 Composition projects use the versioned `filament-tools-composition-v1` envelope
 and preserve source fingerprints plus the recipe for every explicit choice. The
@@ -248,7 +250,9 @@ UI previews installation destinations before a separate confirmation action;
 writes and installation retain the same no-overwrite behavior as the CLI. It
 warns before replacing explicit composition choices, tracks saved/unsaved and
 preview-stale state, keeps a browser-local recovery draft, and warns before
-leaving a page with unsaved work.
+leaving a page with unsaved work. **Quick start** opens the guided six-step
+walkthrough and terminology reference; it opens automatically on first use and
+remains available from the header.
 
 ## Maintainer documentation
 

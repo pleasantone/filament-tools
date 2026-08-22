@@ -87,6 +87,30 @@ class ProfileWorkbench:
         """Compatibility wrapper for the default filament result window."""
         return self.catalog_query(query)["results"]
 
+    def printer_options(self, query: str = "", *, limit: int = 50) -> Dict[str, Any]:
+        """Return a small ranked window of exact machine preset names."""
+        normalized = query.strip().casefold()
+        names = [
+            name
+            for name in self.catalog.known_printer_names()
+            if not normalized or normalized in name.casefold()
+        ]
+
+        def rank(name: str) -> tuple[int, str]:
+            folded = name.casefold()
+            if not normalized:
+                score = 2
+            elif folded == normalized:
+                score = 0
+            elif folded.startswith(normalized):
+                score = 1
+            else:
+                score = 2
+            return score, folded
+
+        names.sort(key=rank)
+        return {"results": names[:limit], "total": len(names), "limit": limit}
+
     def profile_view(self, selector: str) -> Dict[str, Any]:
         selected = parse_selector(selector)
         profile = self.catalog.select(selected)

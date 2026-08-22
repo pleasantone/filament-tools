@@ -165,6 +165,12 @@ them. A recipe change invalidates all three projections, and writes or installs
 require a valid current preview. The default Uvicorn bind is localhost and
 installation still requires a separately reviewed plan and confirmation action.
 
+Full-output compatibility is edited as exact machine-preset selections. The
+editor queries a bounded ranked printer-name window and preserves exact custom
+names as an escape hatch. Loading composition sources seeds compatibility from
+the starting profile. Material-family variants are structured name plus printer
+selection rows and compile into the same `TargetVariant` model used by the API.
+
 ## Output and errors
 
 Human output goes to stdout. Warnings and errors go to stderr. Domain errors

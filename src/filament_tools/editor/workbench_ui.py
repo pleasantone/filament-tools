@@ -69,25 +69,6 @@ def _numeric_delta(baseline: Any, value: Any) -> Optional[str]:
     return f"{after - before:+g}"
 
 
-def _parse_lines(value: str) -> List[str]:
-    return list(dict.fromkeys(line.strip() for line in value.splitlines() if line.strip()))
-
-
-def _parse_variants(value: str) -> List[TargetVariant]:
-    variants: List[TargetVariant] = []
-    for line in _parse_lines(value):
-        if "::" not in line:
-            raise ValueError(f"variant must use NAME::PRINTER|PRINTER syntax: {line}")
-        name, printers = line.split("::", 1)
-        variants.append(
-            TargetVariant(
-                name=name.strip(),
-                compatible_printers=[item.strip() for item in printers.split("|") if item.strip()],
-            )
-        )
-    return variants
-
-
 class WorkbenchSession:
     def __init__(self, workbench: ProfileWorkbench):
         self.workbench = workbench
@@ -171,6 +152,8 @@ def _add_global_styles() -> None:
 
 def render_workbench(workbench: ProfileWorkbench) -> None:
     state = WorkbenchSession(workbench)
+    variant_rows: List[Dict[str, Any]] = []
+    printer_option_map: Dict[str, str] = {}
     _add_global_styles()
     ui.page_title("Filament Tools Workbench")
 
@@ -181,9 +164,13 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 ui.label("Profile Workbench").classes("text-xl font-bold").props(
                     'role="heading" aria-level="1"'
                 )
-            status_label = ui.label(f"{state.catalog_total} filament profiles available").classes(
-                "text-sm"
-            )
+            with ui.row().classes("items-center gap-3"):
+                quick_start_button = ui.button("Quick start", icon="help_outline").props(
+                    "flat color=white"
+                )
+                status_label = ui.label(
+                    f"{state.catalog_total} filament profiles available"
+                ).classes("text-sm")
 
     with ui.tabs().classes("w-full bg-white border-b") as tabs:
         profiles_tab = ui.tab("Library", icon="inventory_2")
@@ -862,6 +849,9 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     sparse_help = ui.label(
                         "Sparse output inherits material identity and unchanged behavior from its parent."
                     ).classes("ft-muted text-sm")
+                    ui.icon("info", size="xs").tooltip(
+                        "Sparse profiles store only differences and cannot remove a value supplied by their parent."
+                    )
                     root_controls = ui.column().classes("w-full gap-2")
                     with root_controls:
                         ui.label(
@@ -877,18 +867,33 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             value="inherit",
                             label="Material identity",
                         ).classes("w-full")
+                        ui.icon("info", size="xs").tooltip(
+                            "filament_id identifies a material family in Bambu Studio; generated family variants share one ID."
+                        )
                         explicit_id = ui.input(label="Explicit filament_id").classes("w-full")
-                        compatibility = ui.textarea(
-                            label="Compatible printer presets",
-                            placeholder="One exact printer preset name per line",
+                        printer_search = ui.input(
+                            label="Find exact printer presets",
+                            placeholder="Search indexed machine presets",
                         ).classes("w-full")
+                        printer_search_count = ui.label().classes("ft-muted text-xs")
+                        compatibility = ui.select(
+                            {},
+                            label="Compatible printer presets",
+                            multiple=True,
+                            with_input=True,
+                            new_value_mode="add-unique",
+                        ).classes("w-full")
+                        ui.icon("info", size="xs").tooltip(
+                            "Use exact machine preset names. Source compatibility is filled when sources are loaded."
+                        )
                         with ui.expansion(
                             "Material family variants (Advanced)", icon="hub"
                         ).classes("w-full"):
-                            variants = ui.textarea(
-                                label="Root family variants",
-                                placeholder="Name::Printer preset|Another preset",
-                            ).classes("w-full")
+                            ui.label(
+                                "Each variant creates one full profile with the shared material identity."
+                            ).classes("ft-muted text-sm")
+                            variants_container = ui.column().classes("w-full gap-2")
+                            add_variant_button = ui.button("Add family variant", icon="add")
                     preview_button = (
                         ui.button("Preview and validate", icon="fact_check")
                         .classes("w-full")
@@ -1039,6 +1044,169 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         """
     )
 
+    with ui.dialog() as quick_start_dialog, ui.card().classes("w-full max-w-2xl"):
+        ui.label("Create a filament profile").classes("text-xl font-bold")
+        ui.label(
+            "A short guided path through comparison, composition, and a safe install preview."
+        ).classes("ft-muted")
+        for number, title, detail in (
+            (1, "Choose a starting filament", "Use Library search or an exact JSON path."),
+            (
+                2,
+                "Add a faster donor",
+                "Compare it with the starting profile and keep only differences.",
+            ),
+            (3, "Choose one setting", "Click a donor temperature or flow cell in Create profile."),
+            (
+                4,
+                "Review provenance",
+                "Selected via is your choice; defined by is the ancestor supplying the value.",
+            ),
+            (
+                5,
+                "Preview both outputs",
+                "Sparse inherits unchanged behavior; full output is AMS-compatible and standalone.",
+            ),
+            (
+                6,
+                "Preview installation",
+                "Review destinations without writing, then install only if the plan is current.",
+            ),
+        ):
+            with ui.row().classes("w-full items-start gap-3"):
+                ui.label(str(number)).classes("ft-stat")
+                with ui.column().classes("gap-0"):
+                    ui.label(title).classes("font-bold")
+                    ui.label(detail).classes("ft-muted text-sm")
+        with ui.expansion("Terms and edge cases", icon="menu_book").classes("w-full"):
+            ui.markdown(
+                """
+- **Raw** is explicit JSON; **effective** includes inherited values; **overrides** compares explicit child values with the parent.
+- **Sparse** output cannot remove a setting supplied by its parent. Use full output when intentional removal is required.
+- **Material identity** (`filament_id`) groups compatible full presets into one AMS material family.
+- Printer compatibility values must exactly match slicer machine-preset names.
+"""
+            )
+        with ui.row().classes("w-full justify-end"):
+            dismiss_quick_start = ui.button("Start exploring", icon="check")
+
+    def dismiss_walkthrough() -> None:
+        if core.loop is not None:
+            ui.run_javascript("localStorage.setItem('filament-tools-walkthrough-v1', 'seen')")
+        quick_start_dialog.close()
+
+    async def show_walkthrough_once() -> None:
+        try:
+            seen = await ui.run_javascript("localStorage.getItem('filament-tools-walkthrough-v1')")
+            if not seen:
+                quick_start_dialog.open()
+        except Exception:
+            return
+
+    quick_start_button.on_click(quick_start_dialog.open)
+    dismiss_quick_start.on_click(dismiss_walkthrough)
+    if core.loop is not None:
+        ui.timer(0.75, show_walkthrough_once, once=True)
+
+    def refresh_printer_options() -> None:
+        try:
+            page = workbench.printer_options(str(printer_search.value or ""), limit=50)
+            selected = [str(value) for value in compatibility.value or []]
+            variant_selected = [
+                str(value) for row in variant_rows for value in (row["printers"].value or [])
+            ]
+            names = list(dict.fromkeys([*page["results"], *selected, *variant_selected]))
+            printer_option_map.clear()
+            printer_option_map.update({name: name for name in names})
+            compatibility.set_options(printer_option_map, value=selected)
+            for row in variant_rows:
+                row["printers"].set_options(
+                    printer_option_map, value=list(row["printers"].value or [])
+                )
+            printer_search_count.text = (
+                f"Showing {len(page['results'])} of {page['total']} indexed printer presets"
+            )
+        except Exception as exc:
+            ui.notify(str(exc), type="negative")
+
+    def remove_variant(row: Dict[str, Any]) -> None:
+        row["element"].delete()
+        variant_rows.remove(row)
+        invalidate_recipe("family variants")
+
+    def add_variant(variant: Optional[TargetVariant] = None, *, changed: bool = True) -> None:
+        with variants_container:
+            element = ui.row().classes("w-full items-end gap-2 ft-responsive-row")
+            with element:
+                name = ui.input(
+                    label="Variant profile name",
+                    value=variant.name if variant else "",
+                ).classes("min-w-64 flex-grow")
+                selected_printers = list(variant.compatible_printers) if variant else []
+                for printer in selected_printers:
+                    printer_option_map.setdefault(printer, printer)
+                printers = ui.select(
+                    printer_option_map,
+                    label="Exact compatible printers",
+                    value=selected_printers,
+                    multiple=True,
+                    with_input=True,
+                    new_value_mode="add-unique",
+                ).classes("min-w-64 flex-grow")
+                remove = ui.button(icon="delete", color="negative").props(
+                    'flat aria-label="Remove family variant"'
+                )
+        row = {"element": element, "name": name, "printers": printers}
+        variant_rows.append(row)
+        remove.on_click(lambda: remove_variant(row))
+        name.on_value_change(lambda _: invalidate_recipe("family variants"))
+        printers.on_value_change(lambda _: invalidate_recipe("family variants"))
+        if changed:
+            invalidate_recipe("family variants")
+
+    def clear_variants() -> None:
+        for row in list(variant_rows):
+            row["element"].delete()
+        variant_rows.clear()
+
+    def structured_variants() -> List[TargetVariant]:
+        variants: List[TargetVariant] = []
+        for index, row in enumerate(variant_rows, start=1):
+            name = str(row["name"].value or "").strip()
+            printers = [str(value) for value in row["printers"].value or []]
+            if not name and not printers:
+                continue
+            if not name:
+                raise ValueError(f"family variant {index} requires a profile name")
+            if not printers:
+                raise ValueError(f"family variant {index} requires compatible printers")
+            variants.append(TargetVariant(name=name, compatible_printers=printers))
+        return variants
+
+    def populate_compatibility_from_source() -> None:
+        if not starting_source.value or compatibility.value:
+            return
+        try:
+            source = workbench.resolver.resolve_selector(str(starting_source.value))
+            compatible = source.values.get("compatible_printers", [])
+            if not isinstance(compatible, list):
+                return
+            values = [str(value) for value in compatible if str(value).strip()]
+            for value in values:
+                printer_option_map.setdefault(value, value)
+            compatibility.set_options(printer_option_map, value=values)
+        except Exception:
+            return
+
+    add_variant_button.on_click(lambda: add_variant())
+    printer_search.on(
+        "update:model-value",
+        lambda _: refresh_printer_options(),
+        throttle=0.35,
+        leading_events=False,
+        trailing_events=True,
+    )
+
     def sync_sources_from_compare() -> None:
         values = list(compare_profiles.value or [])
         if compare_baseline.value in values:
@@ -1114,7 +1282,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             output_mode=OutputMode(str(output_mode.value)),
             selections=state.selections,
             compatible_printers=(
-                _parse_lines(str(compatibility.value or "")) or None if is_root else None
+                [str(value) for value in compatibility.value or []] or None if is_root else None
             ),
             identity_mode=(
                 IdentityMode(str(identity_mode.value)) if is_root else IdentityMode.INHERIT
@@ -1126,7 +1294,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 and explicit_id.value
                 else None
             ),
-            variants=_parse_variants(str(variants.value or "")) if is_root else [],
+            variants=structured_variants() if is_root else [],
             fingerprints=state.fingerprints,
         )
 
@@ -1255,6 +1423,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     def perform_source_load() -> None:
         replace_sources_dialog.close()
         refresh_composition(reset=True)
+        populate_compatibility_from_source()
         invalidate_recipe("source change")
 
     def request_source_load() -> None:
@@ -1524,11 +1693,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         output_mode.value = recipe.output_mode.value
         identity_mode.value = recipe.identity_mode.value
         explicit_id.value = recipe.filament_id or ""
-        compatibility.value = "\n".join(recipe.compatible_printers or [])
-        variants.value = "\n".join(
-            f"{variant.name}::{'|'.join(variant.compatible_printers)}"
-            for variant in recipe.variants
-        )
+        for printer in recipe.compatible_printers or []:
+            printer_option_map.setdefault(printer, printer)
+        compatibility.set_options(printer_option_map, value=list(recipe.compatible_printers or []))
+        clear_variants()
+        for variant in recipe.variants:
+            add_variant(variant, changed=False)
         state.selections = dict(recipe.selections)
         state.fingerprints = dict(recipe.fingerprints)
         refresh_composition()
@@ -1670,7 +1840,6 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         (sparse_parent, "inheritance parent"),
         (explicit_id, "material identity"),
         (compatibility, "printer compatibility"),
-        (variants, "family variants"),
     ):
         control.on_value_change(lambda _, reason=action: invalidate_recipe(reason))
     for control in (install_app, user_folder, config_dir):

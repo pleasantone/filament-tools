@@ -110,6 +110,12 @@ def create_editor_app(workbench: ProfileWorkbench) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/printers")
+    def printers(
+        q: str = Query(default=""), limit: int = Query(default=50, ge=1, le=200)
+    ) -> Dict[str, Any]:
+        return workbench.printer_options(q, limit=limit)
+
     @app.post("/api/compare")
     def compare(request: ComparisonRequest) -> Dict[str, Any]:
         try:

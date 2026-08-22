@@ -28,12 +28,20 @@ class EditorIntegrationTests(unittest.TestCase):
                 "Editor Fast PETG",
                 {"inherits": "Editor PETG", "nozzle_temperature": ["265"]},
             )
+            write_profile(
+                directory,
+                "Bambu Lab H2C 0.4 nozzle",
+                {"type": "machine", "printer_model": "H2C"},
+            )
             client = TestClient(create_editor_app(ProfileWorkbench(ProfileCatalog([directory]))))
             self.assertEqual(client.get("/").status_code, 200)
             catalog_response = client.get("/api/profiles?q=Editor")
             self.assertEqual(catalog_response.status_code, 200)
             self.assertEqual(catalog_response.json()["total"], 2)
             self.assertIn("Editor PETG", catalog_response.text)
+            printers = client.get("/api/printers", params={"q": "H2C"})
+            self.assertEqual(printers.status_code, 200)
+            self.assertEqual(printers.json()["results"], ["Bambu Lab H2C 0.4 nozzle"])
             profile = client.get("/api/profile", params={"selector": str(source)})
             self.assertEqual(profile.status_code, 200)
             self.assertEqual(profile.json()["summary"]["type"], "filament")
