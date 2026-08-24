@@ -560,11 +560,7 @@ class ProfileCatalog:
         matches = list(self.by_name.get(spec.casefold(), [])) or list(
             self.by_stem.get(spec.casefold(), [])
         )
-        profiles = (
-            self._prefer_system([self.load_path(path) for path in matches])
-            if matches
-            else self._prefer_system(self.search(spec, 500))
-        )
+        profiles = self._prefer_system([self.load_path(path) for path in matches])
         if prefer_dir and profiles:
             parent = prefer_dir.resolve()
             same_directory = [profile for profile in profiles if profile.path.parent == parent]

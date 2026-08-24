@@ -33,6 +33,20 @@ class ResolutionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "inheritance cycle"):
                 ProfileResolver(catalog).resolve(catalog.load_path(first))
 
+    def test_missing_parent_does_not_fuzzy_match_similar_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            write_profile(directory, "Generic PETG HF", {"temperature": 260})
+            child = write_profile(
+                directory,
+                "Child",
+                {"inherits": "Generic PETG", "temperature": 250},
+            )
+            catalog = ProfileCatalog([directory])
+
+            with self.assertRaisesRegex(FileNotFoundError, "Generic PETG"):
+                ProfileResolver(catalog).resolve(catalog.load_path(child))
+
     def test_parent_resolution_prefers_same_vendor_package(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "OrcaSlicer"
