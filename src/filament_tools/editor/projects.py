@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from filament_tools.model import CompositionRecipe, ProfileDraft
+from filament_tools.model import (
+    CompositionRecipe,
+    ProfileDraft,
+    validate_filename_component,
+)
 
 PROJECT_FORMAT = "filament-tools-draft-v1"
 COMPOSITION_PROJECT_FORMAT = "filament-tools-composition-v2"
@@ -24,6 +28,7 @@ def _validate_output(path: Path, label: str) -> Path:
     output = path.expanduser().resolve()
     if output.suffix.casefold() not in {".json", ".ftdraft"}:
         raise ValueError(f"{label} project filename must end in .json or .ftdraft")
+    validate_filename_component(output.stem, label="project filename")
     if not output.parent.is_dir():
         raise ValueError(f"project directory does not exist: {output.parent}")
     return output
@@ -87,9 +92,10 @@ def save_composition_project(
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             pass
     modified_at = _timestamp()
-    metadata_name = (project_name or recipe.name).strip()
-    if not metadata_name:
-        raise ValueError("project name cannot be empty")
+    metadata_name = validate_filename_component(
+        project_name or recipe.name,
+        label="project name",
+    )
     document = {
         "format": COMPOSITION_PROJECT_FORMAT,
         "project": {

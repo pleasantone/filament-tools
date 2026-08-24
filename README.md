@@ -289,6 +289,10 @@ profile already exists. The separate project name defaults to the material
 portion (`Generic PETG Custom`). Project and JSON paths follow those names and
 start in the last successfully used directory, or `~/Documents` on first use.
 These suggestions continue following source/name changes until edited manually.
+Profile and project names are normalized to Unicode NFC and must also be portable
+Windows/macOS filenames: reserved device names, control characters, reserved
+punctuation, trailing dots/spaces, and overlong components are rejected before
+preview or writing.
 
 Composition projects use the versioned `filament-tools-composition-v2` envelope
 and preserve the independent project name, timestamps, source fingerprints, and

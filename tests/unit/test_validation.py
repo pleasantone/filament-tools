@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from filament_tools.model import Severity
+from filament_tools.model import ProfileDraft, Severity
 from filament_tools.validation import validate_profile_data
 from tests.support import SRC, root_profile  # noqa: F401
 
@@ -26,6 +26,26 @@ class ValidationTests(unittest.TestCase):
         profile["filament_settings_id"] = ["../escaped"]
         codes = {issue.code for issue in validate_profile_data(profile)}
         self.assertIn("profile.unsafe_name", codes)
+
+    def test_profile_names_are_portable_across_supported_platforms(self) -> None:
+        for name in (
+            "CON",
+            "NUL.json",
+            "name:bad",
+            "name?bad",
+            "trailing.",
+            "trailing ",
+            "control\x01name",
+            "x" * 252,
+        ):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, "profile name"):
+                    ProfileDraft(name=name, source="source.json")
+
+    def test_profile_names_are_normalized_to_nfc(self) -> None:
+        draft = ProfileDraft(name="Cafe\u0301 PETG", source="source.json")
+
+        self.assertEqual(draft.name, "Café PETG")
 
 
 if __name__ == "__main__":

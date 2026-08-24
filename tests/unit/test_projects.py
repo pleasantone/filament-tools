@@ -41,6 +41,18 @@ class CompositionProjectTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 save_composition_project(path, recipe)
 
+    def test_project_names_and_filenames_are_portable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            recipe = CompositionRecipe(name="Material", starting_source="source.json")
+            with self.assertRaisesRegex(ValueError, "project filename"):
+                save_composition_project(Path(raw) / "CON.ftdraft", recipe)
+            with self.assertRaisesRegex(ValueError, "project name"):
+                save_composition_project(
+                    Path(raw) / "material.ftdraft",
+                    recipe,
+                    project_name="invalid:name",
+                )
+
     def test_legacy_composition_project_loads_with_synthesized_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "legacy.ftdraft"

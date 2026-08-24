@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -9,15 +10,45 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CONIN$",
+    "CONOUT$",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_PORTABLE_FORBIDDEN_CHARACTERS = frozenset('<>:"/\\|?*')
+
+
+def validate_filename_component(value: str, *, label: str = "filename") -> str:
+    """Return one normalized component valid on macOS, Linux, and Windows."""
+    if value != value.rstrip():
+        raise ValueError(f"{label} cannot end with whitespace")
+    name = unicodedata.normalize("NFC", value.strip())
+    if not name:
+        raise ValueError(f"{label} cannot be empty")
+    if name in {".", ".."}:
+        raise ValueError(f"{label} must be a portable filename")
+    if name.endswith("."):
+        raise ValueError(f"{label} cannot end with a dot")
+    if any(character in _PORTABLE_FORBIDDEN_CHARACTERS for character in name) or any(
+        ord(character) < 32 or ord(character) == 127 for character in name
+    ):
+        raise ValueError(f"{label} contains characters that are not portable filenames")
+    device_basename = name.split(".", 1)[0].upper()
+    if device_basename in _WINDOWS_RESERVED_NAMES:
+        raise ValueError(f"{label} uses a reserved Windows device name")
+    if len(f"{name}.json".encode()) > 255:
+        raise ValueError(f"{label} is too long for a portable JSON filename")
+    return name
+
 
 def validate_profile_name(value: str) -> str:
     """Reject names that cannot safely become one slicer JSON filename."""
-    name = value.strip()
-    if not name:
-        raise ValueError("profile name cannot be empty")
-    if name in {".", ".."} or any(character in name for character in ("/", "\\", "\x00")):
-        raise ValueError("profile name must be a safe filename without path separators")
-    return name
+    return validate_filename_component(value, label="profile name")
 
 
 class OutputMode(str, Enum):

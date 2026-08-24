@@ -121,7 +121,9 @@ directories in browser-local storage and keeps suggestions synchronized only
 until the user edits the corresponding field.
 
 Generated filenames must exactly match profile names. Names cannot contain path
-separators. Generated-profile writers use exclusive creation and family writes
+separators or other non-portable characters, Windows device names, trailing
+dots/spaces, or overlong UTF-8 components; accepted names are Unicode NFC.
+Generated-profile writers use exclusive creation and family writes
 roll back earlier files when a later artifact fails. New project paths are also
 exclusive, while Save atomically replaces only the project currently loaded by
 the editor; project v2 metadata preserves its name and creation/modification
