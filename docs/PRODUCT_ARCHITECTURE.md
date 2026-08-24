@@ -151,6 +151,7 @@ The product is expected to provide all of the following:
 - one-click recipe switching between sparse inherited and full AMS output;
 - catalog-wide ancestor/descendant forest with broken-link visibility;
 - saved, portable draft project files with source fingerprints.
+- reviewed profile update and uninstall with drift checks and retained backups.
 
 ## Optional and future features
 
@@ -162,7 +163,6 @@ refactored release.
 - Detect source drift from saved fingerprints and explain changed ancestors.
 - Rebase a sparse profile onto a newer or different base.
 - Show the inheritance graph, cycles, orphans, and dependent children.
-- Update, uninstall, and back up installed profiles safely.
 - Package and import a complete material family as one bundle.
 - Batch builds from declarative project files.
 - Compare equivalent Bambu Studio and OrcaSlicer interpretations.

@@ -202,6 +202,8 @@ Preview installation before writing:
 uv run filament-tools install "/output/My PETG.json" --dry-run
 uv run filament-tools install "/output/My PETG.json"
 uv run filament-tools install profiles/*.json --app orca
+uv run filament-tools install profiles/*.json --action update
+uv run filament-tools install profiles/*.json --action uninstall
 ```
 
 Bambu Studio is the default. Use `--config-dir` for a portable/test tree and
@@ -209,7 +211,10 @@ Bambu Studio is the default. Use `--config-dir` for a portable/test tree and
 `user/<folder>/filament/base`; sparse children go to `user/<folder>/filament`.
 The installer validates every operation before writing, refuses JSON or `.info`
 collisions, creates files exclusively, and rolls back files from the current
-transaction if a later write fails. It never creates or copies `.info` files.
+transaction if a later write fails. Explicit update and uninstall actions verify
+that the reviewed installed file has not changed, refuse slicer-managed `.info`
+metadata, and preserve the original at a displayed `.bak` path. It never creates
+or copies `.info` files.
 Restart the slicer after installation.
 
 ## Local visual workbench
@@ -271,6 +276,12 @@ same physical material as its source (retain the existing `filament_id`) or a
 new material (seed a material-family name and generate an ID). Advanced identity
 policies remain available. Family rows accept optional per-variant setting edits
 as a JSON object, matching the typed API model.
+
+The installation application follows the starting profile (Bambu Studio or
+OrcaSlicer) until changed manually. The active slicer account and application
+data directory are auto-detected. Installation defaults to safe exclusive
+creation; explicit update and uninstall actions preview their backup paths and
+require the same separate confirmation.
 
 New compositions suggest `Custom` before the machine suffix—for example,
 `Generic PETG Custom @BBL H2C 0.4 nozzle`—and add a numeric suffix when that

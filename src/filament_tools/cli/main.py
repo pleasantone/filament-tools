@@ -18,7 +18,13 @@ from filament_tools.comparison import compare_overrides, compare_profiles
 from filament_tools.editor.app import create_editor_app
 from filament_tools.editor.projects import load_project, save_project
 from filament_tools.installation import apply_install_plan, plan_install, plan_lines
-from filament_tools.model import IdentityMode, OutputMode, ProfileDraft, TargetVariant
+from filament_tools.model import (
+    IdentityMode,
+    InstallAction,
+    OutputMode,
+    ProfileDraft,
+    TargetVariant,
+)
 from filament_tools.reporting.csv_report import write_csv
 from filament_tools.reporting.html_report import write_html
 from filament_tools.reporting.terminal import comparison_text, issues_text, overrides_text
@@ -411,11 +417,19 @@ def install_command(
     config_dir: Optional[Path] = typer.Option(None),
     user_folder: Optional[str] = typer.Option(None),
     dry_run: bool = typer.Option(False, help="Validate and print the plan without writing."),
+    action: InstallAction = typer.Option(
+        InstallAction.CREATE,
+        help="Create, update with backup, or uninstall with backup.",
+    ),
 ) -> None:
     """Install validated profiles into Bambu Studio or OrcaSlicer."""
     try:
         plan = plan_install(
-            profiles, app=app_name, app_data_dir=config_dir, user_folder=user_folder
+            profiles,
+            app=app_name,
+            app_data_dir=config_dir,
+            user_folder=user_folder,
+            action=action,
         )
         console.print("\n".join(plan_lines(plan)))
         if plan.issues:
@@ -425,8 +439,13 @@ def install_command(
         if dry_run:
             console.print("Dry run: no files written.")
         else:
+            completed = {
+                InstallAction.CREATE: "Installed",
+                InstallAction.UPDATE: "Updated",
+                InstallAction.UNINSTALL: "Uninstalled",
+            }[action]
             for path in apply_install_plan(plan):
-                console.print(f"Installed {path}")
+                console.print(f"{completed} {path}")
     except typer.Exit:
         raise
     except Exception as exc:

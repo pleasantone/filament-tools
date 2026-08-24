@@ -32,6 +32,12 @@ class IdentityMode(str, Enum):
     EXPLICIT = "explicit"
 
 
+class InstallAction(str, Enum):
+    CREATE = "create"
+    UPDATE = "update"
+    UNINSTALL = "uninstall"
+
+
 class ChoiceKind(str, Enum):
     SOURCE = "source"
     CUSTOM = "custom"
@@ -277,6 +283,9 @@ class InstallOperation:
     destination: Path
     data: Dict[str, Any]
     is_root: bool
+    action: InstallAction = InstallAction.CREATE
+    backup: Optional[Path] = None
+    existing_fingerprint: Optional[str] = None
 
 
 @dataclass
@@ -284,6 +293,7 @@ class InstallPlan:
     app: str
     app_data_dir: Path
     user_folder: str
+    action: InstallAction = InstallAction.CREATE
     operations: List[InstallOperation] = field(default_factory=list)
     issues: List[ValidationIssue] = field(default_factory=list)
 

@@ -77,6 +77,7 @@ class ProfileWorkbench:
                     family=family,
                 )
             ),
+            "application": "orca" if app_label(source_profile.path) == "OrcaSlicer" else "bambu",
         }
 
     def catalog_query(

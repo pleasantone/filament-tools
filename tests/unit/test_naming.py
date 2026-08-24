@@ -71,6 +71,21 @@ class NamingTests(unittest.TestCase):
                 str(directory.resolve() / f"{draft.name}.json"),
             )
 
+    def test_install_application_follows_the_starting_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = write_profile(
+                directory,
+                "Orca PETG",
+                root_profile("Orca PETG"),
+                "OrcaSlicer/user/default/filament/base/Orca PETG.json",
+            )
+            workbench = ProfileWorkbench(ProfileCatalog([directory]))
+
+            defaults = workbench.composition_defaults(str(source))
+
+            self.assertEqual(defaults["application"], "orca")
+
 
 if __name__ == "__main__":
     unittest.main()

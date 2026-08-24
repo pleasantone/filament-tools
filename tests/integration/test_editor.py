@@ -90,6 +90,27 @@ class EditorIntegrationTests(unittest.TestCase):
             self.assertEqual(replayed.status_code, 400)
             self.assertIn("already used", replayed.text)
 
+            request["action"] = "update"
+            update_preview = client.post("/api/composition/install-plan", json=request)
+            self.assertEqual(update_preview.status_code, 200, update_preview.text)
+            self.assertEqual(update_preview.json()["action"], "update")
+            self.assertTrue(update_preview.json()["operations"][0]["backup"])
+            updated = client.post(
+                "/api/composition/install",
+                json={"plan_id": update_preview.json()["plan_id"]},
+            )
+            self.assertEqual(updated.status_code, 200, updated.text)
+
+            request["action"] = "uninstall"
+            uninstall_preview = client.post("/api/composition/install-plan", json=request)
+            self.assertEqual(uninstall_preview.status_code, 200, uninstall_preview.text)
+            uninstalled = client.post(
+                "/api/composition/install",
+                json={"plan_id": uninstall_preview.json()["plan_id"]},
+            )
+            self.assertEqual(uninstalled.status_code, 200, uninstalled.text)
+            self.assertFalse(destination.exists())
+
     def test_composition_project_api_supports_save_then_replace(self) -> None:
         from filament_tools.editor.app import create_editor_app
 

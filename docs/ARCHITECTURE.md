@@ -163,7 +163,13 @@ is explicit.
 `filament/base`; children route to `filament`. Existing destination JSON or
 sibling `.info` is an error. `apply_install_plan` creates destinations
 exclusively and removes files created by the current transaction on failure.
-Pre-existing files are never removed.
+The default create action never removes a pre-existing file.
+
+Explicit update and uninstall plans are the exception to exclusive creation.
+They require an existing user profile without sibling sync metadata, record its
+content fingerprint and an unused backup path during review, recheck both at
+apply time, and preserve the original in that backup. A later operation failure
+restores every earlier update/uninstall from its backup.
 
 ## Editor
 
@@ -209,6 +215,9 @@ the same physical material or a new one; advanced inherit/reuse/generate/explici
 policies compile to the existing domain model. Material-family variants are
 structured name, printer selection, and optional per-variant setting edits and
 compile into the same `TargetVariant` model used by the API.
+The install application is seeded from the starting profile's application and
+remains user-overridable; active account and application data paths continue to
+use platform-adapter auto-detection.
 
 ## Output and errors
 

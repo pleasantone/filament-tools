@@ -9,6 +9,32 @@ from tests.support import ROOT, root_profile, run_cli, write_profile
 
 
 class CliTests(unittest.TestCase):
+    def test_install_maintenance_actions_are_previewable(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            profile = write_profile(directory, "Maintained PETG", root_profile("Maintained PETG"))
+            config = directory / "BambuStudio"
+            config.mkdir()
+            created = run_cli(["install", str(profile), "--config-dir", str(config)])
+            self.assertEqual(created.returncode, 0, created.stderr)
+
+            for action in ("update", "uninstall"):
+                with self.subTest(action=action):
+                    preview = run_cli(
+                        [
+                            "install",
+                            str(profile),
+                            "--config-dir",
+                            str(config),
+                            "--action",
+                            action,
+                            "--dry-run",
+                        ]
+                    )
+                    self.assertEqual(preview.returncode, 0, preview.stderr)
+                    self.assertIn(f"Action: {action}", preview.stdout)
+                    self.assertIn("backup:", preview.stdout)
+
     def test_help_exposes_intent_commands(self) -> None:
         result = run_cli(["--help"])
         self.assertEqual(result.returncode, 0, result.stderr)

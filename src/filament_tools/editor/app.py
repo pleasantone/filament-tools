@@ -17,7 +17,7 @@ from filament_tools.editor.projects import (
 )
 from filament_tools.editor.security import LocalEditorBoundary
 from filament_tools.installation import apply_install_plan, plan_install
-from filament_tools.model import CompositionRecipe, ProfileDraft
+from filament_tools.model import CompositionRecipe, InstallAction, ProfileDraft
 from filament_tools.service import ProfileWorkbench
 from filament_tools.transforms import write_artifact, write_artifacts
 from filament_tools.validation import has_errors
@@ -41,6 +41,7 @@ class InstallPreviewRequest(BaseModel):
     app: str = "bambu"
     config_dir: Optional[str] = None
     user_folder: Optional[str] = None
+    action: InstallAction = InstallAction.CREATE
 
 
 class BuildRequest(BaseModel):
@@ -69,6 +70,7 @@ class CompositionInstallRequest(BaseModel):
     app: str = "bambu"
     config_dir: Optional[str] = None
     user_folder: Optional[str] = None
+    action: InstallAction = InstallAction.CREATE
 
 
 class ApplyInstallRequest(BaseModel):
@@ -104,10 +106,12 @@ def create_editor_app(
         return {
             "plan_id": plan_id,
             "valid": plan.valid,
+            "action": plan.action.value,
             "operations": [
                 {
                     "destination": str(operation.destination),
                     "is_root": operation.is_root,
+                    "backup": str(operation.backup) if operation.backup else None,
                 }
                 for operation in plan.operations
             ],
@@ -281,6 +285,7 @@ def create_editor_app(
                 app=request.app,
                 app_data_dir=Path(request.config_dir) if request.config_dir else None,
                 user_folder=request.user_folder,
+                action=request.action,
             )
             plan.issues[:0] = issues
             return install_plan_json(plan)
@@ -298,6 +303,7 @@ def create_editor_app(
             app=request.app,
             app_data_dir=Path(request.config_dir) if request.config_dir else None,
             user_folder=request.user_folder,
+            action=request.action,
         )
         plan.issues[:0] = issues
         return plan

@@ -27,6 +27,7 @@ from filament_tools.model import (
     CompositionChoice,
     CompositionRecipe,
     IdentityMode,
+    InstallAction,
     OutputMode,
     TargetVariant,
 )
@@ -502,6 +503,8 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     project_path_seed = SeededStringState()
     output_path_seed = SeededStringState()
     material_name_seed = SeededStringState()
+    install_app_seed = SeededStringState()
+    install_app_seed.record("bambu")
     variant_rows: List[Dict[str, Any]] = []
     printer_option_map: Dict[str, str] = {}
     _add_global_styles()
@@ -1448,9 +1451,19 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             value="bambu",
                             label="Application",
                         ).classes("w-48")
-                        user_folder = ui.input(label="User folder", placeholder="default").classes(
-                            "w-48"
-                        )
+                        install_action = ui.select(
+                            {
+                                "create": "Create new",
+                                "update": "Update with backup",
+                                "uninstall": "Uninstall with backup",
+                            },
+                            value="create",
+                            label="Action",
+                        ).classes("w-48")
+                        user_folder = ui.input(
+                            label="User folder",
+                            placeholder="Auto-detect active slicer account",
+                        ).classes("w-64")
                         config_dir = ui.input(label="Application data directory").classes(
                             "flex-grow"
                         )
@@ -2034,6 +2047,9 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             if output_path_seed.should_replace(str(output_path.value or "")):
                 output_path.value = defaults["output_path"]
                 output_path_seed.record(defaults["output_path"])
+            if install_app_seed.should_replace(str(install_app.value or "")):
+                install_app.value = defaults["application"]
+                install_app_seed.record(defaults["application"])
         refresh_composition(reset=True)
         sync_destination_defaults(str(output_name.value or ""))
         populate_compatibility_from_source()
@@ -2411,6 +2427,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             app=str(install_app.value),
             app_data_dir=Path(str(config_dir.value)) if config_dir.value else None,
             user_folder=str(user_folder.value).strip() if user_folder.value else None,
+            action=InstallAction(str(install_action.value)),
         )
         return plan
 
@@ -2420,7 +2437,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             install_output.content = json.dumps(
                 {
                     "valid": plan.valid,
+                    "action": plan.action.value,
                     "destinations": [str(operation.destination) for operation in plan.operations],
+                    "backups": [
+                        str(operation.backup) for operation in plan.operations if operation.backup
+                    ],
                     "issues": [issue.model_dump(mode="json") for issue in plan.issues],
                 },
                 ensure_ascii=False,
@@ -2437,10 +2458,10 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     plan_button.on_click(preview_install)
 
     with ui.dialog() as install_dialog, ui.card().classes("w-full max-w-2xl"):
-        ui.label("Install generated profiles?").classes("text-lg font-bold")
-        ui.label(
-            "This creates new profile files at the reviewed destinations and never overwrites existing profiles."
-        ).classes("ft-muted")
+        install_dialog_heading = ui.label("Install generated profiles?").classes(
+            "text-lg font-bold"
+        )
+        install_dialog_message = ui.label("").classes("ft-muted")
         install_dialog_details = ui.code("").classes("ft-code w-full")
         with ui.row().classes("w-full justify-end"):
             ui.button("Cancel", on_click=install_dialog.close).props("flat")
@@ -2451,9 +2472,24 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             plan = state.pending_plan
             if plan is None or state.install_plan_revision != state.revision or not plan.valid:
                 raise ValueError("preview a current, valid installation plan first")
-            install_dialog_details.content = "\n".join(
-                str(operation.destination) for operation in plan.operations
+            labels = []
+            for operation in plan.operations:
+                label = f"{operation.action.value}: {operation.destination}"
+                if operation.backup:
+                    label += f"\n  backup: {operation.backup}"
+                labels.append(label)
+            install_dialog_details.content = "\n".join(labels)
+            install_dialog_heading.text = f"{plan.action.value.title()} reviewed profiles?"
+            install_dialog_message.text = (
+                "Existing profiles are preserved at the displayed backup paths."
+                if plan.action != InstallAction.CREATE
+                else "This creates new profile files and never overwrites existing profiles."
             )
+            confirm_install.text = {
+                InstallAction.CREATE: "Install profiles",
+                InstallAction.UPDATE: "Update profiles",
+                InstallAction.UNINSTALL: "Uninstall profiles",
+            }[plan.action]
             install_dialog_details.update()
             install_dialog.open()
         except Exception as exc:
@@ -2471,13 +2507,19 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             state.pending_plan = None
             state.install_plan_revision = None
             install_button.disable()
+            completed = {
+                InstallAction.CREATE: "Installed",
+                InstallAction.UPDATE: "Updated with backups",
+                InstallAction.UNINSTALL: "Uninstalled with backups",
+            }[plan.action]
             install_output.content = (
-                "Installed:\n"
+                completed
+                + ":\n"
                 + "\n".join(str(path) for path in paths)
                 + "\n\nRestart the slicer to load the new profiles."
             )
             install_output.update()
-            ui.notify("Installed profiles. Restart the slicer to load them.", type="positive")
+            ui.notify(f"{completed}. Restart the slicer to reload profiles.", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative", multi_line=True)
 
@@ -2550,7 +2592,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         (compatibility, "printer compatibility"),
     ):
         control.on_value_change(lambda _, reason=action: invalidate_recipe(reason))
-    for control in (install_app, user_folder, config_dir):
+    for control in (install_app, install_action, user_folder, config_dir):
         control.on_value_change(lambda _: invalidate_install_plan())
     if core.loop is not None:
         ui.timer(0.35, restore_destination_directories, once=True)
