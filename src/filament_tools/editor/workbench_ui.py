@@ -30,6 +30,12 @@ from filament_tools.model import (
     OutputMode,
     TargetVariant,
 )
+from filament_tools.naming import (
+    default_document_directory,
+    suggest_output_path,
+    suggest_project_name,
+    suggest_project_path,
+)
 from filament_tools.reporting.csv_report import write_csv
 from filament_tools.reporting.html_report import write_html
 from filament_tools.schema import GROUP_LABELS
@@ -39,6 +45,7 @@ from filament_tools.transforms import write_artifact, write_artifacts
 from filament_tools.validation import has_errors
 
 CATALOG_FILTERS_STORAGE_KEY = "filament-tools-catalog-filters-v1"
+DESTINATION_DIRECTORIES_STORAGE_KEY = "filament-tools-destination-directories-v1"
 WORKBENCH_DARK_MODE = False
 DEFAULT_MACHINE_FILTERS = ("H2C", "X1C")
 
@@ -410,6 +417,8 @@ class WorkbenchSession:
         self.saved_revision = 0
         self.pending_plan: Any = None
         self.current_project_path: Optional[Path] = None
+        self.project_directory = default_document_directory()
+        self.output_directory = default_document_directory()
         self.last_action = ""
 
     def checkpoint(self, action: str) -> None:
@@ -479,6 +488,9 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     state = WorkbenchSession(workbench, initial_catalog_filters)
     compatibility_seed = CompatibilitySeedState()
     output_name_seed = SeededStringState()
+    project_name_seed = SeededStringState()
+    project_path_seed = SeededStringState()
+    output_path_seed = SeededStringState()
     variant_rows: List[Dict[str, Any]] = []
     printer_option_map: Dict[str, str] = {}
     _add_global_styles()
@@ -1351,14 +1363,15 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         .classes("w-full")
                         .props('data-testid="preview-output"')
                     )
+                    project_name = ui.input(label="Project name").classes("w-full")
                     project_path = ui.input(label="Composition project path").classes("w-full")
                     with ui.row().classes("w-full gap-2"):
                         save_project_button = ui.button("Save project", icon="save").props(
                             "outline"
                         )
-                        save_project_as_button = ui.button(
-                            "Save project as", icon="save_as"
-                        ).props("outline")
+                        save_project_as_button = ui.button("Save project as", icon="save_as").props(
+                            "outline"
+                        )
                         load_project_button = ui.button("Load project", icon="folder_open").props(
                             "outline"
                         )
@@ -1482,6 +1495,72 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         except Exception:
             pass
 
+    def is_family_output() -> bool:
+        return str(output_mode.value) == OutputMode.ROOT.value and bool(variant_rows)
+
+    def sync_destination_defaults(profile_name: str, *, include_project_name: bool = True) -> None:
+        profile = profile_name.strip()
+        if not profile:
+            return
+        if include_project_name and project_name_seed.should_replace(str(project_name.value or "")):
+            suggested_project = suggest_project_name(profile)
+            project_name.value = suggested_project
+            project_name_seed.record(suggested_project)
+        active_project_name = str(project_name.value or "").strip()
+        if active_project_name and project_path_seed.should_replace(str(project_path.value or "")):
+            suggested_project_path = str(
+                suggest_project_path(active_project_name, state.project_directory)
+            )
+            project_path.value = suggested_project_path
+            project_path_seed.record(suggested_project_path)
+        if output_path_seed.should_replace(str(output_path.value or "")):
+            suggested_output = str(
+                suggest_output_path(
+                    profile,
+                    state.output_directory,
+                    family=is_family_output(),
+                )
+            )
+            output_path.value = suggested_output
+            output_path_seed.record(suggested_output)
+
+    def persist_destination_directories() -> None:
+        if core.loop is None:
+            return
+        payload = json.dumps(
+            {
+                "project": str(state.project_directory),
+                "output": str(state.output_directory),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        ui.run_javascript(
+            "localStorage.setItem("
+            + json.dumps(DESTINATION_DIRECTORIES_STORAGE_KEY)
+            + ", "
+            + json.dumps(payload)
+            + ");"
+        )
+
+    async def restore_destination_directories() -> None:
+        try:
+            stored = await ui.run_javascript(
+                "localStorage.getItem(" + json.dumps(DESTINATION_DIRECTORIES_STORAGE_KEY) + ")"
+            )
+            payload = json.loads(str(stored)) if stored else {}
+            if not isinstance(payload, dict):
+                return
+            project_directory = Path(str(payload.get("project") or "")).expanduser()
+            output_directory = Path(str(payload.get("output") or "")).expanduser()
+            if project_directory.is_dir():
+                state.project_directory = project_directory.resolve()
+            if output_directory.is_dir():
+                state.output_directory = output_directory.resolve()
+            sync_destination_defaults(str(output_name.value or ""))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return
+
     ui.add_body_html(
         """
         <script>
@@ -1595,6 +1674,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     def remove_variant(row: Dict[str, Any]) -> None:
         row["element"].delete()
         variant_rows.remove(row)
+        sync_destination_defaults(str(output_name.value or ""), include_project_name=False)
         invalidate_recipe("family variants")
 
     def add_variant(variant: Optional[TargetVariant] = None, *, changed: bool = True) -> None:
@@ -1621,6 +1701,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 )
         row = {"element": element, "name": name, "printers": printers}
         variant_rows.append(row)
+        sync_destination_defaults(str(output_name.value or ""), include_project_name=False)
         remove.on_click(lambda: remove_variant(row))
         name.on_value_change(lambda _: invalidate_recipe("family variants"))
         printers.on_value_change(lambda _: invalidate_recipe("family variants"))
@@ -1689,11 +1770,6 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         starting_source.value = values[0]
         reference_sources.value = values[1:]
         sparse_parent.value = values[0]
-        if not output_name.value:
-            name = next(
-                (entry["name"] for entry in state.entries if entry["path"] == values[0]), ""
-            )
-            output_name.value = f"{name} composed"
         tabs.value = compose_tab
         request_source_load()
 
@@ -1723,16 +1799,16 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         ]
         name = str(output_name.value or "").strip()
         if not name:
-            source_name = next(
-                (
-                    entry["name"]
-                    for entry in state.entries
-                    if entry["path"] == str(starting_source.value)
-                ),
-                "Composed filament",
+            defaults = workbench.composition_defaults(
+                str(starting_source.value),
+                project_directory=state.project_directory,
+                output_directory=state.output_directory,
+                family=is_family_output(),
             )
-            name = f"{source_name} composed"
+            name = defaults["profile_name"]
             output_name.value = name
+            output_name_seed.record(name)
+            sync_destination_defaults(name)
         fingerprint_sources = {str(starting_source.value), *references}
         if str(output_mode.value) == OutputMode.SPARSE.value:
             fingerprint_sources.add(str(sparse_parent.value or starting_source.value))
@@ -1884,10 +1960,25 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         replace_sources_dialog.close()
         replace_output_name = output_name_seed.should_replace(str(output_name.value or ""))
         if replace_output_name:
-            output_name.value = ""
+            defaults = workbench.composition_defaults(
+                str(starting_source.value),
+                project_directory=state.project_directory,
+                output_directory=state.output_directory,
+                family=is_family_output(),
+            )
+            output_name.value = defaults["profile_name"]
+            output_name_seed.record(defaults["profile_name"])
+            if project_name_seed.should_replace(str(project_name.value or "")):
+                project_name.value = defaults["project_name"]
+                project_name_seed.record(defaults["project_name"])
+            if project_path_seed.should_replace(str(project_path.value or "")):
+                project_path.value = defaults["project_path"]
+                project_path_seed.record(defaults["project_path"])
+            if output_path_seed.should_replace(str(output_path.value or "")):
+                output_path.value = defaults["output_path"]
+                output_path_seed.record(defaults["output_path"])
         refresh_composition(reset=True)
-        if replace_output_name:
-            output_name_seed.record(str(output_name.value or ""))
+        sync_destination_defaults(str(output_name.value or ""))
         populate_compatibility_from_source()
         invalidate_recipe("source change")
 
@@ -2133,8 +2224,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             artifacts = state.preview_artifacts
             if len(artifacts) == 1:
                 paths = [write_artifact(artifacts[0], str(output_path.value or ""))]
+                state.output_directory = Path(paths[0]).parent
             else:
                 paths = write_artifacts(artifacts, str(output_path.value or ""))
+                state.output_directory = Path(str(output_path.value)).expanduser().resolve()
+            persist_destination_directories()
             ui.notify("Wrote " + ", ".join(paths), type="positive", multi_line=True)
         except Exception as exc:
             ui.notify(str(exc), type="negative", multi_line=True)
@@ -2147,21 +2241,39 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             replace = not save_as and state.current_project_path == requested
             if not save_as and state.current_project_path is not None and not replace:
                 raise ValueError("The project path changed; use Save project as")
-            path = save_composition_project(requested, make_recipe(), replace=replace)
+            name = str(project_name.value or "").strip()
+            if not name:
+                raise ValueError("project name cannot be empty")
+            path = save_composition_project(
+                requested,
+                make_recipe(),
+                replace=replace,
+                project_name=name,
+            )
             state.current_project_path = path
+            state.project_directory = path.parent
             project_path.value = str(path)
+            project_path_seed.reset()
+            persist_destination_directories()
             state.saved_revision = state.revision
             update_workspace_state()
             ui.notify(f"Saved {path}", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
 
-    def apply_loaded_recipe(recipe: CompositionRecipe, *, saved: bool) -> None:
+    def apply_loaded_recipe(
+        recipe: CompositionRecipe,
+        *,
+        saved: bool,
+        loaded_project_name: Optional[str] = None,
+    ) -> None:
         starting_source.value = recipe.starting_source
         reference_sources.value = recipe.reference_sources
         sparse_parent.value = recipe.sparse_parent or recipe.starting_source
         output_name_seed.reset()
         output_name.value = recipe.name
+        project_name_seed.reset()
+        project_name.value = loaded_project_name or suggest_project_name(recipe.name)
         output_mode.value = recipe.output_mode.value
         identity_mode.value = recipe.identity_mode.value
         explicit_id.value = recipe.filament_id or ""
@@ -2183,16 +2295,24 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         write_button.disable()
         plan_button.disable()
         invalidate_install_plan()
+        sync_destination_defaults(recipe.name)
         update_output_visibility()
         update_workspace_state()
 
     def load_recipe_project() -> None:
         try:
             path = Path(str(project_path.value or "")).expanduser().resolve()
-            recipe, _ = load_composition_project_document(path)
+            recipe, metadata = load_composition_project_document(path)
             state.current_project_path = path
+            state.project_directory = path.parent
             project_path.value = str(path)
-            apply_loaded_recipe(recipe, saved=True)
+            project_path_seed.reset()
+            persist_destination_directories()
+            apply_loaded_recipe(
+                recipe,
+                saved=True,
+                loaded_project_name=str(metadata.get("name") or recipe.name),
+            )
             ui.notify("Composition project loaded", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
@@ -2206,7 +2326,10 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 raise ValueError("no browser recovery draft is available")
             recipe = CompositionRecipe.model_validate_json(str(recovered))
             state.current_project_path = None
+            project_path_seed.reset()
+            project_path.value = ""
             apply_loaded_recipe(recipe, saved=False)
+            sync_destination_defaults(recipe.name)
             tabs.value = compose_tab
             ui.notify("Recovered the browser draft", type="positive")
         except Exception as exc:
@@ -2309,14 +2432,29 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
 
     def output_mode_changed() -> None:
         update_output_visibility()
+        sync_destination_defaults(str(output_name.value or ""), include_project_name=False)
         invalidate_recipe("output mode")
+
+    def output_name_changed() -> None:
+        sync_destination_defaults(str(output_name.value or ""))
+        invalidate_recipe("profile name")
+
+    def project_name_changed() -> None:
+        if project_path_seed.should_replace(str(project_path.value or "")):
+            value = str(project_name.value or "").strip()
+            if value:
+                suggested = str(suggest_project_path(value, state.project_directory))
+                project_path.value = suggested
+                project_path_seed.record(suggested)
+        invalidate_recipe("project name")
 
     output_mode.on_value_change(lambda _: output_mode_changed())
     identity_mode.on_value_change(
         lambda _: (update_output_visibility(), invalidate_recipe("material identity"))
     )
+    output_name.on_value_change(lambda _: output_name_changed())
+    project_name.on_value_change(lambda _: project_name_changed())
     for control, action in (
-        (output_name, "profile name"),
         (sparse_parent, "inheritance parent"),
         (explicit_id, "material identity"),
         (compatibility, "printer compatibility"),
@@ -2324,6 +2462,8 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         control.on_value_change(lambda _, reason=action: invalidate_recipe(reason))
     for control in (install_app, user_folder, config_dir):
         control.on_value_change(lambda _: invalidate_install_plan())
+    if core.loop is not None:
+        ui.timer(0.35, restore_destination_directories, once=True)
 
     update_output_visibility()
     update_workspace_state()

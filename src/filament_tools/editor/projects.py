@@ -87,10 +87,13 @@ def save_composition_project(
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             pass
     modified_at = _timestamp()
+    metadata_name = (project_name or recipe.name).strip()
+    if not metadata_name:
+        raise ValueError("project name cannot be empty")
     document = {
         "format": COMPOSITION_PROJECT_FORMAT,
         "project": {
-            "name": (project_name or recipe.name).strip(),
+            "name": metadata_name,
             "created_at": created_at,
             "modified_at": modified_at,
         },

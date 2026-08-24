@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from filament_tools.catalog import ProfileCatalog, app_label, source_kind
@@ -16,6 +17,13 @@ from filament_tools.model import (
     OutputMode,
     ProfileDraft,
     ValidationIssue,
+)
+from filament_tools.naming import (
+    default_document_directory,
+    suggest_output_path,
+    suggest_profile_name,
+    suggest_project_name,
+    suggest_project_path,
 )
 from filament_tools.resolution import ProfileResolver
 from filament_tools.schema import GROUP_LABELS, group_for_key, setting_metadata
@@ -40,6 +48,36 @@ class ProfileWorkbench:
         self.catalog.refresh()
         self.resolver.clear()
         return len(self.catalog.by_path)
+
+    def composition_defaults(
+        self,
+        source: str,
+        *,
+        project_directory: Optional[Path] = None,
+        output_directory: Optional[Path] = None,
+        family: bool = False,
+    ) -> Dict[str, str]:
+        source_profile = self.resolver.resolve_selector(source).profile
+        profile_name = suggest_profile_name(
+            source_profile.name,
+            (profile.name for profile in self.catalog.by_path.values()),
+        )
+        project_name = suggest_project_name(profile_name)
+        default_directory = default_document_directory()
+        return {
+            "profile_name": profile_name,
+            "project_name": project_name,
+            "project_path": str(
+                suggest_project_path(project_name, project_directory or default_directory)
+            ),
+            "output_path": str(
+                suggest_output_path(
+                    profile_name,
+                    output_directory or default_directory,
+                    family=family,
+                )
+            ),
+        }
 
     def catalog_query(
         self,
@@ -184,7 +222,11 @@ class ProfileWorkbench:
         source_profile = self.resolver.resolve_selector(source)
         base_profile = self.resolver.resolve_selector(base) if base else None
         return ProfileDraft(
-            name=name or f"{source_profile.profile.name} copy",
+            name=name
+            or suggest_profile_name(
+                source_profile.profile.name,
+                (profile.name for profile in self.catalog.by_path.values()),
+            ),
             source=source,
             base=base,
             output_mode=output_mode,

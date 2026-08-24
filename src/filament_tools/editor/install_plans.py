@@ -42,6 +42,4 @@ class ReviewedInstallPlans:
 
     def _purge(self) -> None:
         now = self.clock()
-        self._plans = {
-            token: entry for token, entry in self._plans.items() if entry[0] >= now
-        }
+        self._plans = {token: entry for token, entry in self._plans.items() if entry[0] >= now}

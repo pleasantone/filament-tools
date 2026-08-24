@@ -26,9 +26,7 @@ class EditorSecurityTests(unittest.TestCase):
 
     def test_api_rejects_non_loopback_host_and_origin(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            app = create_editor_app(
-                ProfileWorkbench(ProfileCatalog([Path(raw)])), mount_ui=False
-            )
+            app = create_editor_app(ProfileWorkbench(ProfileCatalog([Path(raw)])), mount_ui=False)
             client = TestClient(app, base_url="http://127.0.0.1")
 
             self.assertEqual(client.get("/api/profiles").status_code, 200)

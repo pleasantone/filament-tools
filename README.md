@@ -268,8 +268,16 @@ policy. Full-output compatibility uses searchable exact printer-preset chips;
 optional family variants use structured name and compatibility rows and share
 one material identity.
 
+New compositions suggest `Custom` before the machine suffix—for example,
+`Generic PETG Custom @BBL H2C 0.4 nozzle`—and add a numeric suffix when that
+profile already exists. The separate project name defaults to the material
+portion (`Generic PETG Custom`). Project and JSON paths follow those names and
+start in the last successfully used directory, or `~/Documents` on first use.
+These suggestions continue following source/name changes until edited manually.
+
 Composition projects use the versioned `filament-tools-composition-v2` envelope
-and preserve project metadata, source fingerprints, and the recipe for every
+and preserve the independent project name, timestamps, source fingerprints, and
+the recipe for every
 explicit choice. Legacy v1 projects remain loadable. **Save project** atomically
 updates the currently loaded project; **Save project as** creates a new file and
 refuses overwrite. The

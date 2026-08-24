@@ -113,6 +113,13 @@ Root projection:
 Family projection creates separate roots with variant-specific compatibility and
 edits while passing one chosen `filament_id` to every artifact.
 
+One naming service suggests profile names, project names, and destinations for
+every interface. Profile suggestions insert `Custom` before a Bambu-style
+machine suffix and avoid catalog collisions; the project name is independent of
+the generated preset name. The editor remembers successful project and output
+directories in browser-local storage and keeps suggestions synchronized only
+until the user edits the corresponding field.
+
 Generated filenames must exactly match profile names. Names cannot contain path
 separators. Generated-profile writers use exclusive creation and family writes
 roll back earlier files when a later artifact fails. New project paths are also

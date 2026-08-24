@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from filament_tools.editor.install_plans import ReviewedInstallPlans
 from filament_tools.editor.projects import (
-    load_composition_project,
+    load_composition_project_document,
     load_project,
     save_composition_project,
     save_project,
@@ -355,7 +355,8 @@ def create_editor_app(
     @app.get("/api/composition/project/load")
     def composition_project_load(path: str) -> Dict[str, Any]:
         try:
-            return load_composition_project(Path(path)).model_dump(mode="json")
+            recipe, project = load_composition_project_document(Path(path))
+            return {"recipe": recipe.model_dump(mode="json"), "project": project}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

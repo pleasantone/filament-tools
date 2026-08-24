@@ -117,7 +117,8 @@ class EditorIntegrationTests(unittest.TestCase):
 
             loaded = client.get("/api/composition/project/load", params={"path": str(path)})
             self.assertEqual(loaded.status_code, 200, loaded.text)
-            self.assertEqual(loaded.json()["name"], "Second")
+            self.assertEqual(loaded.json()["recipe"]["name"], "Second")
+            self.assertEqual(loaded.json()["project"]["name"], "PETG project")
 
     def test_routes_can_mount_without_server_workbench_ui(self) -> None:
         from filament_tools.editor.app import create_editor_app
