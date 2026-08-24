@@ -102,7 +102,21 @@ class EditorIntegrationTests(unittest.TestCase):
             path = directory / "project.ftdraft"
             request = {
                 "path": str(path),
-                "recipe": {"name": "First", "starting_source": "source.json"},
+                "recipe": {
+                    "name": "First",
+                    "starting_source": "source.json",
+                    "output_mode": "root",
+                    "identity_mode": "generate",
+                    "material_name": "PETG Project Material",
+                    "user_id": "identity-namespace",
+                    "variants": [
+                        {
+                            "name": "First H2C",
+                            "compatible_printers": ["Bambu Lab H2C 0.4 nozzle"],
+                            "edits": {"filament_max_volumetric_speed": ["20"]},
+                        }
+                    ],
+                },
                 "project_name": "PETG project",
             }
 
@@ -119,6 +133,11 @@ class EditorIntegrationTests(unittest.TestCase):
             self.assertEqual(loaded.status_code, 200, loaded.text)
             self.assertEqual(loaded.json()["recipe"]["name"], "Second")
             self.assertEqual(loaded.json()["project"]["name"], "PETG project")
+            self.assertEqual(loaded.json()["recipe"]["material_name"], "PETG Project Material")
+            self.assertEqual(
+                loaded.json()["recipe"]["variants"][0]["edits"],
+                {"filament_max_volumetric_speed": ["20"]},
+            )
 
     def test_routes_can_mount_without_server_workbench_ui(self) -> None:
         from filament_tools.editor.app import create_editor_app

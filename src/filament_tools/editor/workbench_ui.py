@@ -56,6 +56,16 @@ def _display(value: Any, present: bool = True) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def _variant_edits_json(value: str) -> Dict[str, Any]:
+    text = value.strip()
+    if not text:
+        return {}
+    edits = json.loads(text)
+    if not isinstance(edits, dict):
+        raise ValueError("variant setting edits must be a JSON object")
+    return edits
+
+
 def _setting_label(row: Dict[str, Any]) -> str:
     metadata = row.get("metadata", {})
     name = str(metadata.get("name") or row["key"])
@@ -491,6 +501,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     project_name_seed = SeededStringState()
     project_path_seed = SeededStringState()
     output_path_seed = SeededStringState()
+    material_name_seed = SeededStringState()
     variant_rows: List[Dict[str, Any]] = []
     printer_option_map: Dict[str, str] = {}
     _add_global_styles()
@@ -1321,20 +1332,39 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         ui.label(
                             "Full output has no parent. AMS identity and exact printer compatibility are required."
                         ).classes("ft-muted text-sm")
-                        identity_mode = ui.select(
+                        material_intent = ui.radio(
                             {
-                                "inherit": "Retain starting material ID",
-                                "reuse": "Reuse matching ID or generate",
-                                "generate": "Generate Bambu-compatible ID",
-                                "explicit": "Use explicit ID",
+                                "same": "Same physical material as the starting profile",
+                                "new": "A new physical material",
                             },
-                            value="inherit",
-                            label="Material identity",
+                            value="same",
+                        ).classes("w-full")
+                        material_name = ui.input(
+                            label="Material family name",
+                            placeholder="e.g. My PETG",
                         ).classes("w-full")
                         ui.icon("info", size="xs").tooltip(
                             "filament_id identifies a material family in Bambu Studio; generated family variants share one ID."
                         )
-                        explicit_id = ui.input(label="Explicit filament_id").classes("w-full")
+                        with ui.expansion(
+                            "Material identity (Advanced)", icon="fingerprint"
+                        ).classes("w-full"):
+                            identity_mode = ui.select(
+                                {
+                                    "inherit": "Retain starting material ID",
+                                    "reuse": "Reuse matching ID or generate",
+                                    "generate": "Generate Bambu-compatible ID",
+                                    "explicit": "Use explicit ID",
+                                },
+                                value="inherit",
+                                label="Identity policy",
+                            ).classes("w-full")
+                            explicit_id = ui.input(label="Explicit filament_id").classes("w-full")
+                            identity_user_id = ui.input(
+                                label="Optional identity namespace",
+                                password=True,
+                                password_toggle_button=True,
+                            ).classes("w-full")
                         printer_search = ui.input(
                             label="Find exact printer presets",
                             placeholder="Search indexed machine presets",
@@ -1523,6 +1553,10 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             )
             output_path.value = suggested_output
             output_path_seed.record(suggested_output)
+        if material_name_seed.should_replace(str(material_name.value or "")):
+            suggested_material = suggest_project_name(profile)
+            material_name.value = suggested_material
+            material_name_seed.record(suggested_material)
 
     def persist_destination_directories() -> None:
         if core.loop is None:
@@ -1696,15 +1730,25 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     with_input=True,
                     new_value_mode="add-unique",
                 ).classes("min-w-64 flex-grow")
+                edits = ui.textarea(
+                    label="Variant setting edits (JSON object)",
+                    value=(
+                        json.dumps(variant.edits, ensure_ascii=False, sort_keys=True)
+                        if variant and variant.edits
+                        else ""
+                    ),
+                    placeholder='{"filament_max_volumetric_speed":["20"]}',
+                ).classes("min-w-64 flex-grow")
                 remove = ui.button(icon="delete", color="negative").props(
                     'flat aria-label="Remove family variant"'
                 )
-        row = {"element": element, "name": name, "printers": printers}
+        row = {"element": element, "name": name, "printers": printers, "edits": edits}
         variant_rows.append(row)
         sync_destination_defaults(str(output_name.value or ""), include_project_name=False)
         remove.on_click(lambda: remove_variant(row))
         name.on_value_change(lambda _: invalidate_recipe("family variants"))
         printers.on_value_change(lambda _: invalidate_recipe("family variants"))
+        edits.on_value_change(lambda _: invalidate_recipe("family variants"))
         if changed:
             invalidate_recipe("family variants")
 
@@ -1724,7 +1768,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 raise ValueError(f"family variant {index} requires a profile name")
             if not printers:
                 raise ValueError(f"family variant {index} requires compatible printers")
-            variants.append(TargetVariant(name=name, compatible_printers=printers))
+            try:
+                edits = _variant_edits_json(str(row["edits"].value or ""))
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise ValueError(f"family variant {index}: {exc}") from exc
+            variants.append(TargetVariant(name=name, compatible_printers=printers, edits=edits))
         return variants
 
     def populate_compatibility_from_source() -> None:
@@ -1818,6 +1866,9 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     selector
                 ).fingerprint
         is_root = str(output_mode.value) == OutputMode.ROOT.value
+        selected_material_name = str(material_name.value or "").strip()
+        if is_root and material_intent.value == "new" and not selected_material_name:
+            raise ValueError("a new physical material requires a material family name")
         return CompositionRecipe(
             name=name,
             starting_source=str(starting_source.value),
@@ -1836,6 +1887,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 if is_root
                 and identity_mode.value == IdentityMode.EXPLICIT.value
                 and explicit_id.value
+                else None
+            ),
+            material_name=(selected_material_name if is_root and selected_material_name else None),
+            user_id=(
+                str(identity_user_id.value or "").strip()
+                if is_root and identity_user_id.value
                 else None
             ),
             variants=structured_variants() if is_root else [],
@@ -2276,6 +2333,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         project_name.value = loaded_project_name or suggest_project_name(recipe.name)
         output_mode.value = recipe.output_mode.value
         identity_mode.value = recipe.identity_mode.value
+        material_intent.value = (
+            "same" if recipe.identity_mode in {IdentityMode.INHERIT, IdentityMode.REUSE} else "new"
+        )
+        material_name_seed.reset()
+        material_name.value = recipe.material_name or suggest_project_name(recipe.name)
+        identity_user_id.value = recipe.user_id or ""
         explicit_id.value = recipe.filament_id or ""
         compatibility_seed.reset()
         for printer in recipe.compatible_printers or []:
@@ -2429,6 +2492,10 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
         explicit_id.set_visibility(
             not is_sparse and identity_mode.value == IdentityMode.EXPLICIT.value
         )
+        material_name.set_visibility(not is_sparse and material_intent.value == "new")
+        identity_user_id.set_visibility(
+            not is_sparse and identity_mode.value == IdentityMode.GENERATE.value
+        )
 
     def output_mode_changed() -> None:
         update_output_visibility()
@@ -2448,15 +2515,38 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 project_path_seed.record(suggested)
         invalidate_recipe("project name")
 
+    def material_intent_changed() -> None:
+        expected = (
+            IdentityMode.INHERIT.value
+            if material_intent.value == "same"
+            else IdentityMode.GENERATE.value
+        )
+        if identity_mode.value != expected:
+            identity_mode.value = expected
+        update_output_visibility()
+        invalidate_recipe("material identity")
+
+    def identity_mode_changed() -> None:
+        expected_intent = (
+            "same"
+            if identity_mode.value in {IdentityMode.INHERIT.value, IdentityMode.REUSE.value}
+            else "new"
+        )
+        if material_intent.value != expected_intent:
+            material_intent.value = expected_intent
+        update_output_visibility()
+        invalidate_recipe("material identity")
+
     output_mode.on_value_change(lambda _: output_mode_changed())
-    identity_mode.on_value_change(
-        lambda _: (update_output_visibility(), invalidate_recipe("material identity"))
-    )
+    material_intent.on_value_change(lambda _: material_intent_changed())
+    identity_mode.on_value_change(lambda _: identity_mode_changed())
     output_name.on_value_change(lambda _: output_name_changed())
     project_name.on_value_change(lambda _: project_name_changed())
     for control, action in (
         (sparse_parent, "inheritance parent"),
+        (material_name, "material name"),
         (explicit_id, "material identity"),
+        (identity_user_id, "material identity"),
         (compatibility, "printer compatibility"),
     ):
         control.on_value_change(lambda _, reason=action: invalidate_recipe(reason))

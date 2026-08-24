@@ -266,7 +266,11 @@ behavioral delta. Full output contains all effective behavior, removes
 `inherits`, and applies the selected material-identity and exact compatibility
 policy. Full-output compatibility uses searchable exact printer-preset chips;
 optional family variants use structured name and compatibility rows and share
-one material identity.
+one material identity. The editor asks whether a full profile represents the
+same physical material as its source (retain the existing `filament_id`) or a
+new material (seed a material-family name and generate an ID). Advanced identity
+policies remain available. Family rows accept optional per-variant setting edits
+as a JSON object, matching the typed API model.
 
 New compositions suggest `Custom` before the machine suffix—for example,
 `Generic PETG Custom @BBL H2C 0.4 nozzle`—and add a numeric suffix when that

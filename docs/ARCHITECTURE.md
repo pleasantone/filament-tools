@@ -204,8 +204,11 @@ installation still requires a separately reviewed plan and confirmation action.
 Full-output compatibility is edited as exact machine-preset selections. The
 editor queries a bounded ranked printer-name window and preserves exact custom
 names as an escape hatch. Loading composition sources seeds compatibility from
-the starting profile. Material-family variants are structured name plus printer
-selection rows and compile into the same `TargetVariant` model used by the API.
+the starting profile. The primary identity choice is whether output represents
+the same physical material or a new one; advanced inherit/reuse/generate/explicit
+policies compile to the existing domain model. Material-family variants are
+structured name, printer selection, and optional per-variant setting edits and
+compile into the same `TargetVariant` model used by the API.
 
 ## Output and errors
 

@@ -17,6 +17,7 @@ from filament_tools.editor.workbench_ui import (
     _composition_source_text,
     _inherited_source_names,
     _update_composition_grid,
+    _variant_edits_json,
     mount_workbench,
 )
 from filament_tools.service import ProfileWorkbench
@@ -70,6 +71,17 @@ class SeededStringStateTests(unittest.TestCase):
         state.reset()
 
         self.assertFalse(state.should_replace("Project PETG"))
+
+
+class VariantEditsTests(unittest.TestCase):
+    def test_variant_edits_require_a_json_object(self) -> None:
+        self.assertEqual(
+            _variant_edits_json('{"filament_max_volumetric_speed":["20"]}'),
+            {"filament_max_volumetric_speed": ["20"]},
+        )
+        self.assertEqual(_variant_edits_json(""), {})
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            _variant_edits_json('["not", "an", "object"]')
 
 
 class CatalogFilterStateTests(unittest.TestCase):
