@@ -66,3 +66,12 @@ Do not leave `__pycache__`, generated HTML/CSV reports, or other smoke-test arti
 - Add synthetic regression coverage for behavior changes. Use temporary profile trees for malformed, missing-parent, cyclic, and ambiguity cases.
 - When a CLI flag or output meaning changes, update `README.md` in the same change.
 - Put detailed design rationale, platform notes, or multi-step maintenance procedures in `docs/`; keep this file limited to rules needed on most turns.
+
+## Git push authorization
+
+- A user instruction of "push" explicitly authorizes an ordinary, non-force
+  push of `HEAD` to the current branch's existing configured upstream.
+- Before pushing, verify the current branch, upstream, and remote URL.
+- "Push" does not authorize force pushes, tag pushes, another branch or remote,
+  changing remote configuration, deleting refs, or creating an upstream.
+- If the current branch has no unambiguous upstream, ask for clarification.
