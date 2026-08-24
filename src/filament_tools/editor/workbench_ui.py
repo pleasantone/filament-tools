@@ -67,6 +67,19 @@ def _variant_edits_json(value: str) -> Dict[str, Any]:
     return edits
 
 
+def _project_save_replace(
+    current_project_path: Optional[Path],
+    requested_path: Path,
+    *,
+    save_as: bool,
+) -> bool:
+    if save_as or current_project_path is None:
+        return False
+    if current_project_path != requested_path:
+        raise ValueError("The project path changed; use Save project as")
+    return True
+
+
 def _setting_label(row: Dict[str, Any]) -> str:
     metadata = row.get("metadata", {})
     name = str(metadata.get("name") or row["key"])
@@ -1659,7 +1672,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             (
                 6,
                 "Preview before writing",
-                "Validate the profile and review its installation destination. Nothing is written until you choose Install.",
+                "Validate the profile and review its installation destination. Nothing is installed until Install; Save project and Write generated profile are separate local file writes.",
             ),
         ):
             with ui.row().classes("w-full items-start gap-3"):
@@ -2311,9 +2324,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
     def save_recipe_project(*, save_as: bool = False) -> None:
         try:
             requested = Path(str(project_path.value or "")).expanduser().resolve()
-            replace = not save_as and state.current_project_path == requested
-            if not save_as and state.current_project_path is not None and not replace:
-                raise ValueError("The project path changed; use Save project as")
+            replace = _project_save_replace(
+                state.current_project_path,
+                requested,
+                save_as=save_as,
+            )
             name = str(project_name.value or "").strip()
             if not name:
                 raise ValueError("project name cannot be empty")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from filament_tools.editor.workbench_ui import (
     _composition_source_column,
     _composition_source_text,
     _inherited_source_names,
+    _project_save_replace,
     _update_composition_grid,
     _variant_edits_json,
     mount_workbench,
@@ -82,6 +84,23 @@ class VariantEditsTests(unittest.TestCase):
         self.assertEqual(_variant_edits_json(""), {})
         with self.assertRaisesRegex(ValueError, "JSON object"):
             _variant_edits_json('["not", "an", "object"]')
+
+
+class ProjectSaveWorkflowTests(unittest.TestCase):
+    def test_first_save_creates_and_repeated_save_replaces_current_project(self) -> None:
+        path = Path("/tmp/material.ftdraft")
+
+        self.assertFalse(_project_save_replace(None, path, save_as=False))
+        self.assertTrue(_project_save_replace(path, path, save_as=False))
+        self.assertFalse(_project_save_replace(path, path, save_as=True))
+
+    def test_changed_path_requires_save_as(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Save project as"):
+            _project_save_replace(
+                Path("/tmp/first.ftdraft"),
+                Path("/tmp/second.ftdraft"),
+                save_as=False,
+            )
 
 
 class CatalogFilterStateTests(unittest.TestCase):

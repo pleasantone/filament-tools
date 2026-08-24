@@ -307,7 +307,9 @@ warns before replacing explicit composition choices, tracks saved/unsaved and
 preview-stale state, keeps a browser-local recovery draft, and warns before
 leaving a page with unsaved work. **Quick start** opens the guided six-step
 walkthrough and terminology reference; it opens automatically on first use and
-remains available from the header.
+remains available from the header. The guide distinguishes installation from
+the separate local writes performed by **Save project** and **Write generated
+profile**.
 
 ### Local macOS application
 
