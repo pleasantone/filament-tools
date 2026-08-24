@@ -222,6 +222,11 @@ uv run filament-tools editor
 
 Open `http://127.0.0.1:8765`. The workbench follows the editing workflow:
 
+The editor intentionally accepts only localhost or loopback bind addresses. Its
+local file and slicer-installation APIs are not a remotely hosted application;
+non-loopback hosts, DNS-rebinding hosts, and cross-origin browser requests are
+rejected.
+
 - **Library** searches the complete preferred catalog on the server, defaults
   to filament presets compatible with H2C or X1C, and filters by application,
   source, material/vendor, one or more machines, and nozzle. Machine filtering

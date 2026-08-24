@@ -31,6 +31,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("filament_max_volumetric_speed", result.stdout)
 
+    def test_editor_rejects_remote_bind_before_starting_server(self) -> None:
+        result = run_cli(["editor", "--host", "0.0.0.0"])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("may only bind", result.stderr)
+
     def test_build_root_then_dry_run_install(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)

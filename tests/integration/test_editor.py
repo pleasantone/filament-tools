@@ -25,7 +25,8 @@ class EditorIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             client = TestClient(
-                create_editor_app(ProfileWorkbench(ProfileCatalog([directory])), mount_ui=False)
+                create_editor_app(ProfileWorkbench(ProfileCatalog([directory])), mount_ui=False),
+                base_url="http://127.0.0.1",
             )
             path = directory / "project.ftdraft"
             request = {
@@ -60,7 +61,7 @@ class EditorIntegrationTests(unittest.TestCase):
                 target=target,
                 mount_ui=False,
             )
-            client = TestClient(result)
+            client = TestClient(result, base_url="http://127.0.0.1")
 
             self.assertIs(result, target)
             self.assertEqual(client.get("/api/profiles").status_code, 200)
@@ -82,7 +83,10 @@ class EditorIntegrationTests(unittest.TestCase):
                 "Bambu Lab H2C 0.4 nozzle",
                 {"type": "machine", "printer_model": "H2C"},
             )
-            client = TestClient(create_editor_app(ProfileWorkbench(ProfileCatalog([directory]))))
+            client = TestClient(
+                create_editor_app(ProfileWorkbench(ProfileCatalog([directory]))),
+                base_url="http://127.0.0.1",
+            )
             self.assertEqual(client.get("/").status_code, 200)
             catalog_response = client.get("/api/profiles?q=Editor")
             self.assertEqual(catalog_response.status_code, 200)

@@ -178,6 +178,11 @@ Catalog UI queries apply managed-copy preference and effective type/filter scope
 before ranking, limiting, and pagination. The default scope is `type=filament`;
 an advanced all-types scope and exact paths remain escape hatches.
 
+The editor rejects non-loopback bind addresses. An ASGI boundary also rejects
+non-loopback Host headers and cross-origin browser requests, including websocket
+connections, so the local file and installation APIs cannot be exposed through
+an ordinary remote Uvicorn bind or DNS rebinding.
+
 The visual recipe has a monotonic workspace revision. Generated artifacts,
 validation, and installation plans are attached to the revision that produced
 them. A recipe change invalidates all three projections, and writes or installs

@@ -480,7 +480,13 @@ def editor(
     port: int = typer.Option(8765, min=1, max=65535),
 ) -> None:
     """Run the local visual filament profile workbench."""
+    from filament_tools.editor.security import validate_editor_host
+
     state: CliState = ctx.obj
+    try:
+        host = validate_editor_host(host)
+    except ValueError as exc:
+        _abort(exc)
     workbench = ProfileWorkbench(state.catalog())
     console.print(f"Editor available at http://{host}:{port}")
     uvicorn.run(create_editor_app(workbench), host=host, port=port, log_level="info")

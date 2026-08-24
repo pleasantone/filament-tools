@@ -14,6 +14,7 @@ from filament_tools.editor.projects import (
     save_composition_project,
     save_project,
 )
+from filament_tools.editor.security import LocalEditorBoundary
 from filament_tools.installation import apply_install_plan, plan_install
 from filament_tools.model import CompositionRecipe, ProfileDraft
 from filament_tools.service import ProfileWorkbench
@@ -90,6 +91,7 @@ def create_editor_app(
         if target is not None
         else FastAPI(title="Filament Tools Profile Editor", version="0.2.0")
     )
+    app.add_middleware(LocalEditorBoundary)
 
     @app.get("/api/profiles")
     def profiles(
