@@ -15,7 +15,7 @@ from nicegui import core, events, ui
 
 from filament_tools.comparison import compare_profiles as collect_comparison
 from filament_tools.editor.projects import (
-    load_composition_project,
+    load_composition_project_document,
     save_composition_project,
 )
 from filament_tools.installation import apply_install_plan, plan_install
@@ -409,6 +409,7 @@ class WorkbenchSession:
         self.preview_artifacts: List[Any] = []
         self.saved_revision = 0
         self.pending_plan: Any = None
+        self.current_project_path: Optional[Path] = None
         self.last_action = ""
 
     def checkpoint(self, action: str) -> None:
@@ -1342,6 +1343,9 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         save_project_button = ui.button("Save project", icon="save").props(
                             "outline"
                         )
+                        save_project_as_button = ui.button(
+                            "Save project as", icon="save_as"
+                        ).props("outline")
                         load_project_button = ui.button("Load project", icon="folder_open").props(
                             "outline"
                         )
@@ -2124,9 +2128,15 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
 
     write_button.on_click(write_output)
 
-    def save_recipe_project() -> None:
+    def save_recipe_project(*, save_as: bool = False) -> None:
         try:
-            path = save_composition_project(Path(str(project_path.value or "")), make_recipe())
+            requested = Path(str(project_path.value or "")).expanduser().resolve()
+            replace = not save_as and state.current_project_path == requested
+            if not save_as and state.current_project_path is not None and not replace:
+                raise ValueError("The project path changed; use Save project as")
+            path = save_composition_project(requested, make_recipe(), replace=replace)
+            state.current_project_path = path
+            project_path.value = str(path)
             state.saved_revision = state.revision
             update_workspace_state()
             ui.notify(f"Saved {path}", type="positive")
@@ -2165,7 +2175,10 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
 
     def load_recipe_project() -> None:
         try:
-            recipe = load_composition_project(Path(str(project_path.value or "")))
+            path = Path(str(project_path.value or "")).expanduser().resolve()
+            recipe, _ = load_composition_project_document(path)
+            state.current_project_path = path
+            project_path.value = str(path)
             apply_loaded_recipe(recipe, saved=True)
             ui.notify("Composition project loaded", type="positive")
         except Exception as exc:
@@ -2179,13 +2192,15 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             if not recovered:
                 raise ValueError("no browser recovery draft is available")
             recipe = CompositionRecipe.model_validate_json(str(recovered))
+            state.current_project_path = None
             apply_loaded_recipe(recipe, saved=False)
             tabs.value = compose_tab
             ui.notify("Recovered the browser draft", type="positive")
         except Exception as exc:
             ui.notify(str(exc), type="negative")
 
-    save_project_button.on_click(save_recipe_project)
+    save_project_button.on_click(lambda: save_recipe_project())
+    save_project_as_button.on_click(lambda: save_recipe_project(save_as=True))
     load_project_button.on_click(load_recipe_project)
     recover_project_button.on_click(recover_recipe_project)
 

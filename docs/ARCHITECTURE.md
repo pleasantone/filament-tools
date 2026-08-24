@@ -114,8 +114,11 @@ Family projection creates separate roots with variant-specific compatibility and
 edits while passing one chosen `filament_id` to every artifact.
 
 Generated filenames must exactly match profile names. Names cannot contain path
-separators. Writers use exclusive creation and family writes roll back earlier
-files when a later artifact fails.
+separators. Generated-profile writers use exclusive creation and family writes
+roll back earlier files when a later artifact fails. New project paths are also
+exclusive, while Save atomically replaces only the project currently loaded by
+the editor; project v2 metadata preserves its name and creation/modification
+timestamps, and legacy v1 composition projects remain readable.
 
 ## Identity rules
 
@@ -191,4 +194,6 @@ selection rows and compile into the same `TargetVariant` model used by the API.
 
 Human output goes to stdout. Warnings and errors go to stderr. Domain errors
 return nonzero CLI status without tracebacks. CSV, HTML, project, generated
-profile, and installed profile writes refuse overwrite.
+profile and installed profile writes refuse overwrite. Project Save is the
+intentional exception: it atomically replaces the currently loaded project;
+Save As remains exclusive.

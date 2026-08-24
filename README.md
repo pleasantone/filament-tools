@@ -259,10 +259,14 @@ policy. Full-output compatibility uses searchable exact printer-preset chips;
 optional family variants use structured name and compatibility rows and share
 one material identity.
 
-Composition projects use the versioned `filament-tools-composition-v1` envelope
-and preserve source fingerprints plus the recipe for every explicit choice. The
+Composition projects use the versioned `filament-tools-composition-v2` envelope
+and preserve project metadata, source fingerprints, and the recipe for every
+explicit choice. Legacy v1 projects remain loadable. **Save project** atomically
+updates the currently loaded project; **Save project as** creates a new file and
+refuses overwrite. The
 UI previews installation destinations before a separate confirmation action;
-writes and installation retain the same no-overwrite behavior as the CLI. It
+generated-profile writes and installation retain the same no-overwrite behavior
+as the CLI. It
 warns before replacing explicit composition choices, tracks saved/unsaved and
 preview-stale state, keeps a browser-local recovery draft, and warns before
 leaving a page with unsaved work. **Quick start** opens the guided six-step

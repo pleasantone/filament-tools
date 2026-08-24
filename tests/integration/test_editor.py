@@ -19,6 +19,34 @@ from filament_tools.service import ProfileWorkbench
 
 @unittest.skipIf(TestClient is None, "FastAPI development dependencies are not installed")
 class EditorIntegrationTests(unittest.TestCase):
+    def test_composition_project_api_supports_save_then_replace(self) -> None:
+        from filament_tools.editor.app import create_editor_app
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            client = TestClient(
+                create_editor_app(ProfileWorkbench(ProfileCatalog([directory])), mount_ui=False)
+            )
+            path = directory / "project.ftdraft"
+            request = {
+                "path": str(path),
+                "recipe": {"name": "First", "starting_source": "source.json"},
+                "project_name": "PETG project",
+            }
+
+            created = client.post("/api/composition/project/save", json=request)
+            self.assertEqual(created.status_code, 200, created.text)
+            duplicate = client.post("/api/composition/project/save", json=request)
+            self.assertEqual(duplicate.status_code, 400)
+            request["replace"] = True
+            request["recipe"]["name"] = "Second"
+            replaced = client.post("/api/composition/project/save", json=request)
+            self.assertEqual(replaced.status_code, 200, replaced.text)
+
+            loaded = client.get("/api/composition/project/load", params={"path": str(path)})
+            self.assertEqual(loaded.status_code, 200, loaded.text)
+            self.assertEqual(loaded.json()["name"], "Second")
+
     def test_routes_can_mount_without_server_workbench_ui(self) -> None:
         from filament_tools.editor.app import create_editor_app
 

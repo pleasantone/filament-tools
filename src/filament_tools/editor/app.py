@@ -24,11 +24,14 @@ from filament_tools.validation import has_errors
 class ProjectRequest(BaseModel):
     path: str = Field(min_length=1)
     draft: ProfileDraft
+    replace: bool = False
 
 
 class CompositionProjectRequest(BaseModel):
     path: str = Field(min_length=1)
     recipe: CompositionRecipe
+    replace: bool = False
+    project_name: Optional[str] = None
 
 
 class InstallPreviewRequest(BaseModel):
@@ -306,7 +309,11 @@ def create_editor_app(
     @app.post("/api/project/save")
     def project_save(request: ProjectRequest) -> Dict[str, str]:
         try:
-            return {"path": str(save_project(Path(request.path), request.draft))}
+            return {
+                "path": str(
+                    save_project(Path(request.path), request.draft, replace=request.replace)
+                )
+            }
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -320,7 +327,16 @@ def create_editor_app(
     @app.post("/api/composition/project/save")
     def composition_project_save(request: CompositionProjectRequest) -> Dict[str, str]:
         try:
-            return {"path": str(save_composition_project(Path(request.path), request.recipe))}
+            return {
+                "path": str(
+                    save_composition_project(
+                        Path(request.path),
+                        request.recipe,
+                        replace=request.replace,
+                        project_name=request.project_name,
+                    )
+                )
+            }
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
