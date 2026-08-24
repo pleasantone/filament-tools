@@ -179,6 +179,9 @@ parents, and cycles.
 Catalog UI queries apply managed-copy preference and effective type/filter scope
 before ranking, limiting, and pagination. The default scope is `type=filament`;
 an advanced all-types scope and exact paths remain escape hatches.
+Explicit catalog reloads rescan every configured root and clear the resolver
+cache as one service operation. The UI invokes it on request and after a
+successful installation.
 
 The editor rejects non-loopback bind addresses. An ASGI boundary also rejects
 non-loopback Host headers and cross-origin browser requests, including websocket

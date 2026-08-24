@@ -138,6 +138,10 @@ def create_editor_app(
             nozzle=nozzle,
         )
 
+    @app.post("/api/catalog/reload")
+    def reload_catalog() -> Dict[str, int]:
+        return {"profiles": workbench.reload_catalog()}
+
     @app.get("/api/profile")
     def profile(selector: str) -> Dict[str, Any]:
         try:

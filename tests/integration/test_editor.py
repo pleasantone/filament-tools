@@ -19,6 +19,39 @@ from filament_tools.service import ProfileWorkbench
 
 @unittest.skipIf(TestClient is None, "FastAPI development dependencies are not installed")
 class EditorIntegrationTests(unittest.TestCase):
+    def test_catalog_reload_finds_new_files_and_invalidates_resolution_cache(self) -> None:
+        from filament_tools.editor.app import create_editor_app
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = write_profile(
+                directory,
+                "Reload PETG",
+                {**root_profile("Reload PETG"), "nozzle_temperature": ["250"]},
+            )
+            client = TestClient(
+                create_editor_app(ProfileWorkbench(ProfileCatalog([directory])), mount_ui=False),
+                base_url="http://127.0.0.1",
+            )
+            first = client.get("/api/profile", params={"selector": str(source)})
+            self.assertEqual(first.json()["effective"]["nozzle_temperature"], ["250"])
+
+            write_profile(
+                directory,
+                "Reload PETG",
+                {**root_profile("Reload PETG"), "nozzle_temperature": ["265"]},
+            )
+            write_profile(directory, "New PETG", root_profile("New PETG"))
+            stale = client.get("/api/profile", params={"selector": str(source)})
+            self.assertEqual(stale.json()["effective"]["nozzle_temperature"], ["250"])
+
+            reloaded = client.post("/api/catalog/reload")
+            self.assertEqual(reloaded.status_code, 200, reloaded.text)
+            refreshed = client.get("/api/profile", params={"selector": str(source)})
+            self.assertEqual(refreshed.json()["effective"]["nozzle_temperature"], ["265"])
+            catalog = client.get("/api/profiles", params={"q": "New PETG"})
+            self.assertEqual(catalog.json()["total"], 1)
+
     def test_composition_install_requires_and_consumes_reviewed_plan(self) -> None:
         from filament_tools.editor.app import create_editor_app
 

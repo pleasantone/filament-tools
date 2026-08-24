@@ -232,7 +232,9 @@ rejected.
   source, material/vendor, one or more machines, and nozzle. Machine filtering
   retains the generic inheritance parents of matching profiles. Library filters
   persist in browser storage between runs; **Clear all filters** removes the
-  saved search and every active filter. Inspection separates effective values,
+  saved search and every active filter. **Reload profiles** rescans the slicer
+  profile trees and clears cached effective values; a successful installation
+  reloads automatically. Inspection separates effective values,
   explicit overrides, provenance, and raw JSON.
 - **Compare** automatically refreshes a two-or-more-profile effective, raw, or
   override grid showing only settings that differ across the selected profiles.

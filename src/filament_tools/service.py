@@ -35,6 +35,12 @@ class ProfileWorkbench:
         self.catalog = catalog
         self.resolver = ProfileResolver(catalog)
 
+    def reload_catalog(self) -> int:
+        """Reload profile files and invalidate every cached effective resolution."""
+        self.catalog.refresh()
+        self.resolver.clear()
+        return len(self.catalog.by_path)
+
     def catalog_query(
         self,
         query: str = "",

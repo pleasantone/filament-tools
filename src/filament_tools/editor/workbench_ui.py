@@ -558,9 +558,13 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             value=initial_catalog_filters.profile_type,
                             label="Preset scope",
                         ).classes("w-full")
-                        clear_catalog_filters = ui.button(
-                            "Clear all filters", icon="filter_alt_off"
-                        ).props('outline data-testid="clear-catalog-filters"')
+                        with ui.row().classes("w-full gap-2"):
+                            clear_catalog_filters = ui.button(
+                                "Clear all filters", icon="filter_alt_off"
+                            ).props('outline data-testid="clear-catalog-filters"')
+                            reload_catalog_button = ui.button(
+                                "Reload profiles", icon="refresh"
+                            ).props('outline data-testid="reload-catalog"')
                     catalog_count = ui.label(
                         f"Showing {len(state.entries)} of {state.catalog_total}"
                     ).classes("ft-muted text-sm")
@@ -700,6 +704,14 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 set_catalog_filter_controls(filters)
                 refresh_catalog(persist=True)
 
+            def reload_profiles_from_disk() -> None:
+                try:
+                    count = workbench.reload_catalog()
+                    refresh_catalog()
+                    ui.notify(f"Reloaded {count} profiles from disk", type="positive")
+                except Exception as exc:
+                    ui.notify(str(exc), type="negative", multi_line=True)
+
             async def restore_catalog_filters() -> None:
                 try:
                     stored = await ui.run_javascript(
@@ -813,6 +825,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 )
             catalog_machine.on_value_change(lambda _: catalog_filters_changed())
             clear_catalog_filters.on_click(clear_all_catalog_filters)
+            reload_catalog_button.on_click(reload_profiles_from_disk)
             if core.loop is not None:
                 ui.timer(0.25, restore_catalog_filters, once=True)
 
@@ -2266,6 +2279,8 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             if plan is None or state.install_plan_revision != state.revision:
                 raise ValueError("the installation plan is stale; preview it again")
             paths = apply_install_plan(plan)
+            workbench.reload_catalog()
+            refresh_catalog()
             install_dialog.close()
             state.pending_plan = None
             state.install_plan_revision = None
