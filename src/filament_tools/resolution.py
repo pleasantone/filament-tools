@@ -37,6 +37,7 @@ class ProfileResolver:
         source_paths: Dict[str, Path] = {}
         element_sources: Dict[str, tuple[str, ...]] = {}
         element_source_paths: Dict[str, tuple[Path, ...]] = {}
+        package_version = self.catalog.package_version(profile)
         chain: List[str] = []
         if profile.inherits:
             parent = self.catalog.find(profile.inherits, prefer_dir=profile.path.parent)
@@ -46,6 +47,7 @@ class ProfileResolver:
             source_paths.update(resolved_parent.source_paths)
             element_sources.update(resolved_parent.element_sources)
             element_source_paths.update(resolved_parent.element_source_paths)
+            package_version = package_version or resolved_parent.package_version
             chain.extend(resolved_parent.chain)
         chain.append(profile.name)
         for key, value in profile.data.items():
@@ -89,6 +91,7 @@ class ProfileResolver:
             source_paths=source_paths,
             element_sources=element_sources,
             element_source_paths=element_source_paths,
+            package_version=package_version,
             chain=tuple(chain),
             fingerprint=fingerprint(values),
         )

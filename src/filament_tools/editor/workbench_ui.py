@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -37,6 +38,10 @@ from filament_tools.service import ProfileWorkbench
 from filament_tools.transforms import write_artifact, write_artifacts
 from filament_tools.validation import has_errors
 
+CATALOG_FILTERS_STORAGE_KEY = "filament-tools-catalog-filters-v1"
+WORKBENCH_DARK_MODE = False
+DEFAULT_MACHINE_FILTERS = ("H2C", "X1C")
+
 
 def _display(value: Any, present: bool = True) -> str:
     if not present:
@@ -67,6 +72,179 @@ def _numeric_delta(baseline: Any, value: Any) -> Optional[str]:
     if before is None or after is None or before == after:
         return None
     return f"{after - before:+g}"
+
+
+def _inherited_source_names(
+    profile_name: str,
+    source: str | None,
+    element_sources: Sequence[str] = (),
+) -> List[str]:
+    inherited = list(
+        dict.fromkeys(name for name in element_sources if name and name != profile_name)
+    )
+    if inherited:
+        return inherited
+    return [source] if source and source != profile_name else []
+
+
+def _comparison_cell_text(
+    cell: Dict[str, Any],
+    *,
+    baseline_value: Any,
+    index: int,
+    mode: str,
+    profile_name: str = "",
+) -> str:
+    rendered = _display(cell["value"], cell["present"])
+    delta = _numeric_delta(baseline_value, cell["value"])
+    if index and delta:
+        rendered += f" · Δ {delta}"
+
+    displayed_profile = profile_name or (str(cell.get("source") or "") if cell["explicit"] else "")
+    inherited_sources = _inherited_source_names(
+        displayed_profile,
+        cell.get("source"),
+        cell.get("element_sources", ()),
+    )
+    source = f"\n↳ {', '.join(inherited_sources)}" if inherited_sources else ""
+    if mode == "overrides":
+        difference = f" · {cell.get('difference')}"
+        return rendered + difference
+    if not cell["present"] or not inherited_sources:
+        return rendered
+    qualifier = "inherited elements" if cell.get("explicit") else "inherited"
+    return rendered + source + f" · {qualifier}"
+
+
+def _composition_source_text(cell: Dict[str, Any]) -> str:
+    inherited_sources = _inherited_source_names(
+        cell["name"],
+        cell.get("source"),
+        cell.get("element_sources", ()),
+    )
+    inherited = f"\n↳ inherited from {', '.join(inherited_sources)}" if inherited_sources else ""
+    return _display(cell["value"], cell["present"]) + inherited
+
+
+def _composition_source_column(name: str, index: int) -> Dict[str, Any]:
+    selected_field = f"_source_selected_{index}"
+    return {
+        "headerName": name,
+        "field": f"source_{index}",
+        "minWidth": 210,
+        "wrapText": True,
+        "autoHeight": True,
+        ":cellClass": (f"params => params.data?.{selected_field} ? 'ft-value-source' : ''"),
+        ":tooltipValueGetter": (
+            f"params => params.data?.{selected_field} ? 'Value source for composed result' : null"
+        ),
+    }
+
+
+def _composition_result_column() -> Dict[str, Any]:
+    return {
+        "headerName": "Composed result",
+        "field": "result",
+        "minWidth": 210,
+        "wrapText": True,
+        "autoHeight": True,
+        ":cellClass": (
+            "params => params.data?._result_state === 'remove' "
+            "? 'ft-value-removed' : params.data?._result_state === 'custom' "
+            "? 'ft-value-source' : ''"
+        ),
+        ":tooltipValueGetter": (
+            "params => params.data?._result_state === 'remove' "
+            "? 'Setting removed from composed result' "
+            ": params.data?._result_state === 'custom' "
+            "? 'Custom value source for composed result' : null"
+        ),
+    }
+
+
+def _composition_scroll_capture_handler(grid_id: int) -> str:
+    return f"""params => {{
+      const root = params.event?.target?.closest?.('.nicegui-aggrid')
+        ?? document.getElementById('c{grid_id}');
+      const viewport = root?.querySelector('.ag-body-viewport');
+      window.__filamentToolsGridScroll ??= {{}};
+      window.__filamentToolsGridScroll[{grid_id}] = {{
+        top: viewport?.scrollTop ?? 0,
+        left: viewport?.scrollLeft ?? 0,
+        pageX: window.scrollX,
+        pageY: window.scrollY,
+        capturedAt: performance.now(),
+      }};
+    }}"""
+
+
+def _update_composition_grid(
+    grid: Any,
+    columns: List[Dict[str, Any]],
+    rows: List[Dict[str, Any]],
+    *,
+    reset: bool,
+) -> None:
+    columns_changed = grid.options.get("columnDefs") != columns
+    previous_rows = grid.options.get("rowData", [])
+    same_row_ids = [row.get("key") for row in previous_rows] == [row.get("key") for row in rows]
+    previous_by_key = {row.get("key"): row for row in previous_rows}
+    changed_rows = [row for row in rows if previous_by_key.get(row.get("key")) != row]
+    grid.options.update(
+        {
+            "columnDefs": columns,
+            "rowData": rows,
+            "animateRows": False,
+            "defaultColDef": {"resizable": True, "sortable": True},
+        }
+    )
+    if reset or columns_changed:
+        grid.update()
+    elif same_row_ids:
+        if changed_rows:
+            transaction = json.dumps({"update": changed_rows})
+            grid.client.run_javascript(
+                f"""
+                const component = getElement({grid.id});
+                const root = getHtmlElement({grid.id});
+                const viewport = root?.querySelector('.ag-body-viewport');
+                const pendingCapture = window.__filamentToolsGridScroll?.[{grid.id}];
+                const captured = pendingCapture
+                  && performance.now() - pendingCapture.capturedAt < 1500
+                  ? pendingCapture
+                  : null;
+                if (window.__filamentToolsGridScroll) {{
+                  delete window.__filamentToolsGridScroll[{grid.id}];
+                }}
+                const scrollTop = captured?.top ?? viewport?.scrollTop ?? 0;
+                const scrollLeft = captured?.left ?? viewport?.scrollLeft ?? 0;
+                const pageX = captured?.pageX ?? window.scrollX;
+                const pageY = captured?.pageY ?? window.scrollY;
+                component.api.applyTransaction({transaction});
+                let remainingRestores = 6;
+                const restoreViewport = () => {{
+                  const liveRoot = getHtmlElement({grid.id});
+                  const liveViewport = liveRoot?.querySelector('.ag-body-viewport');
+                  const verticalRail = liveRoot?.querySelector(
+                    '.ag-body-vertical-scroll-viewport'
+                  );
+                  const horizontalRail = liveRoot?.querySelector(
+                    '.ag-body-horizontal-scroll-viewport'
+                  );
+                  if (liveViewport) {{
+                    liveViewport.scrollTop = scrollTop;
+                    liveViewport.scrollLeft = scrollLeft;
+                  }}
+                  if (verticalRail) verticalRail.scrollTop = scrollTop;
+                  if (horizontalRail) horizontalRail.scrollLeft = scrollLeft;
+                  window.scrollTo(pageX, pageY);
+                  if (--remainingRestores > 0) requestAnimationFrame(restoreViewport);
+                }};
+                requestAnimationFrame(restoreViewport);
+                """
+            )
+    else:
+        grid.run_grid_method("setGridOption", "rowData", rows)
 
 
 class CompatibilitySeedState:
@@ -110,10 +288,104 @@ class SeededStringState:
         self.seeded_value = None
 
 
+@dataclass(frozen=True)
+class CatalogFilterState:
+    """Serializable library filters with explicit first-run and cleared states."""
+
+    search: str = ""
+    applications: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+    material: str = ""
+    machines: tuple[str, ...] = DEFAULT_MACHINE_FILTERS
+    nozzle: str = ""
+    profile_type: str = "filament"
+
+    @classmethod
+    def cleared(cls) -> CatalogFilterState:
+        return cls(machines=(), profile_type="")
+
+    @classmethod
+    def from_json(cls, value: str | None) -> CatalogFilterState:
+        default = cls()
+        if not value:
+            return default
+        try:
+            payload = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return default
+        if not isinstance(payload, dict):
+            return default
+
+        def text(key: str, fallback: str) -> str:
+            candidate = payload.get(key, fallback)
+            return candidate if isinstance(candidate, str) else fallback
+
+        def choices(key: str, fallback: tuple[str, ...], allowed: set[str] | None = None):
+            candidate = payload.get(key, list(fallback))
+            if not isinstance(candidate, list):
+                return fallback
+            values = tuple(
+                dict.fromkeys(
+                    item.strip()
+                    for item in candidate
+                    if isinstance(item, str)
+                    and item.strip()
+                    and (allowed is None or item.strip() in allowed)
+                )
+            )
+            return values
+
+        profile_type = text("profile_type", default.profile_type)
+        if profile_type not in {"", "filament"}:
+            profile_type = default.profile_type
+        return cls(
+            search=text("search", default.search),
+            applications=choices(
+                "applications",
+                default.applications,
+                {"Bambu Studio", "OrcaSlicer"},
+            ),
+            sources=choices("sources", default.sources, {"user", "system", "bundled"}),
+            material=text("material", default.material),
+            machines=choices("machines", default.machines),
+            nozzle=text("nozzle", default.nozzle),
+            profile_type=profile_type,
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "search": self.search,
+                "applications": list(self.applications),
+                "sources": list(self.sources),
+                "material": self.material,
+                "machines": list(self.machines),
+                "nozzle": self.nozzle,
+                "profile_type": self.profile_type,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+
 class WorkbenchSession:
-    def __init__(self, workbench: ProfileWorkbench):
+    def __init__(
+        self,
+        workbench: ProfileWorkbench,
+        catalog_filters: CatalogFilterState | None = None,
+    ):
         self.workbench = workbench
-        catalog_page = workbench.catalog_query(limit=50)
+        filters = catalog_filters or CatalogFilterState()
+        catalog_page = workbench.catalog_query(
+            filters.search,
+            limit=50,
+            profile_type=filters.profile_type or None,
+            applications=set(filters.applications) or None,
+            source_kinds=set(filters.sources) or None,
+            vendor_or_material=filters.material or None,
+            machines=set(filters.machines) or None,
+            nozzle=filters.nozzle or None,
+        )
         self.entries = catalog_page["results"]
         self.catalog_total = int(catalog_page["total"])
         self.options = {
@@ -174,6 +446,16 @@ def _add_global_styles() -> None:
           border-radius:10px; }
         .ft-grid { min-height:360px; height:min(62vh,720px); width:100%; }
         .ft-grid .ag-body-horizontal-scroll { min-height:16px !important; }
+        .ft-grid .ag-cell.ft-value-source {
+          background:#ddf3e8 !important; color:#12372b;
+          box-shadow:inset 4px 0 #0d7652; transition:background-color .12s ease;
+        }
+        .ft-grid .ag-cell.ft-value-source:hover { background:#cdebdc !important; }
+        .ft-grid .ag-cell.ft-value-removed {
+          background:#fff3d6 !important; color:#6f4309;
+          box-shadow:inset 4px 0 #a95e13; transition:background-color .12s ease;
+        }
+        .ft-grid .ag-cell.ft-value-removed:hover { background:#f9e8bd !important; }
         .ft-status { border:1px solid var(--ft-line); border-radius:999px;
           padding:.2rem .6rem; font-size:.78rem; font-weight:700; }
         .ft-danger { color:#9f2d24; background:#fff0ee; }
@@ -192,7 +474,8 @@ def _add_global_styles() -> None:
 
 
 def render_workbench(workbench: ProfileWorkbench) -> None:
-    state = WorkbenchSession(workbench)
+    initial_catalog_filters = CatalogFilterState()
+    state = WorkbenchSession(workbench, initial_catalog_filters)
     compatibility_seed = CompatibilitySeedState()
     output_name_seed = SeededStringState()
     variant_rows: List[Dict[str, Any]] = []
@@ -230,33 +513,59 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     catalog_search = ui.input(
                         label="Search installed profiles",
                         placeholder="Name, material, vendor, or exact JSON path",
+                        value=initial_catalog_filters.search,
                     ).classes("w-full")
                     with ui.expansion("Filters", icon="filter_alt").classes("w-full"):
                         catalog_app = ui.select(
                             {"Bambu Studio": "Bambu Studio", "OrcaSlicer": "OrcaSlicer"},
+                            value=list(initial_catalog_filters.applications),
                             label="Application",
                             multiple=True,
                         ).classes("w-full")
                         catalog_source = ui.select(
                             {"user": "User", "system": "System", "bundled": "Bundled"},
+                            value=list(initial_catalog_filters.sources),
                             label="Source",
                             multiple=True,
                         ).classes("w-full")
-                        catalog_material = ui.input(label="Vendor or material").classes("w-full")
+                        catalog_material = ui.input(
+                            label="Vendor or material",
+                            value=initial_catalog_filters.material,
+                        ).classes("w-full")
                         with ui.row().classes("w-full gap-2"):
-                            catalog_machine = ui.input(label="Machine").classes("flex-grow")
-                            catalog_nozzle = ui.input(label="Nozzle").classes("w-32")
+                            catalog_machine = (
+                                ui.select(
+                                    {"H2C": "H2C", "X1C": "X1C"},
+                                    value=list(initial_catalog_filters.machines),
+                                    label="Machines (any match)",
+                                    multiple=True,
+                                    with_input=True,
+                                    new_value_mode="add-unique",
+                                )
+                                .classes("flex-grow")
+                                .props('data-testid="catalog-machines"')
+                            )
+                            catalog_nozzle = ui.input(
+                                label="Nozzle",
+                                value=initial_catalog_filters.nozzle,
+                            ).classes("w-32")
+                        ui.label(
+                            "Matching profiles and their generic inheritance parents are shown."
+                        ).classes("ft-muted text-xs")
                         catalog_scope = ui.select(
                             {"filament": "Filaments", "": "All preset types (Advanced)"},
-                            value="filament",
+                            value=initial_catalog_filters.profile_type,
                             label="Preset scope",
                         ).classes("w-full")
+                        clear_catalog_filters = ui.button(
+                            "Clear all filters", icon="filter_alt_off"
+                        ).props('outline data-testid="clear-catalog-filters"')
                     catalog_count = ui.label(
                         f"Showing {len(state.entries)} of {state.catalog_total}"
                     ).classes("ft-muted text-sm")
-                    catalog_filters_summary = ui.label("Active filters: Filaments").classes(
-                        "ft-muted text-xs"
-                    )
+                    catalog_filters_summary = ui.label(
+                        "Active filters: Filaments · Machines: H2C, X1C"
+                    ).classes("ft-muted text-xs")
                     catalog_select = (
                         ui.select(
                             state.options,
@@ -272,7 +581,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         value="effective",
                     ).classes("w-full")
                     ui.label(
-                        "Effective values include inheritance. Defined by identifies provenance."
+                        "Effective values include inheritance. Inherited from identifies only ancestor-provided values."
                     ).classes("ft-muted text-sm")
                     add_compare_button = ui.button("Add to comparison", icon="add_chart").classes(
                         "w-full"
@@ -288,17 +597,58 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     with ui.expansion("Raw JSON (Advanced)", icon="data_object").classes("w-full"):
                         profile_json = ui.code("{}", language="json").classes("ft-code w-full")
 
-            def refresh_catalog() -> None:
+            catalog_filter_events_suspended = False
+
+            def current_catalog_filters() -> CatalogFilterState:
+                return CatalogFilterState(
+                    search=str(catalog_search.value or ""),
+                    applications=tuple(str(value) for value in catalog_app.value or []),
+                    sources=tuple(str(value) for value in catalog_source.value or []),
+                    material=str(catalog_material.value or ""),
+                    machines=tuple(str(value) for value in catalog_machine.value or []),
+                    nozzle=str(catalog_nozzle.value or ""),
+                    profile_type=str(catalog_scope.value or ""),
+                )
+
+            def persist_catalog_filters(filters: CatalogFilterState) -> None:
+                if core.loop is not None:
+                    ui.run_javascript(
+                        "localStorage.setItem("
+                        + json.dumps(CATALOG_FILTERS_STORAGE_KEY)
+                        + ", "
+                        + json.dumps(filters.to_json())
+                        + ");"
+                    )
+
+            def set_catalog_filter_controls(filters: CatalogFilterState) -> None:
+                nonlocal catalog_filter_events_suspended
+                catalog_filter_events_suspended = True
+                values = (
+                    (catalog_search, filters.search),
+                    (catalog_app, list(filters.applications)),
+                    (catalog_source, list(filters.sources)),
+                    (catalog_material, filters.material),
+                    (catalog_machine, list(filters.machines)),
+                    (catalog_nozzle, filters.nozzle),
+                    (catalog_scope, filters.profile_type),
+                )
+                for control, value in values:
+                    control.value = value
+                    control.update()
+                catalog_filter_events_suspended = False
+
+            def refresh_catalog(*, persist: bool = False) -> None:
                 try:
+                    filters = current_catalog_filters()
                     page = workbench.catalog_query(
-                        str(catalog_search.value or ""),
+                        filters.search,
                         limit=50,
-                        profile_type=str(catalog_scope.value or "") or None,
-                        applications=set(catalog_app.value or []) or None,
-                        source_kinds=set(catalog_source.value or []) or None,
-                        vendor_or_material=str(catalog_material.value or "") or None,
-                        machine=str(catalog_machine.value or "") or None,
-                        nozzle=str(catalog_nozzle.value or "") or None,
+                        profile_type=filters.profile_type or None,
+                        applications=set(filters.applications) or None,
+                        source_kinds=set(filters.sources) or None,
+                        vendor_or_material=filters.material or None,
+                        machines=set(filters.machines) or None,
+                        nozzle=filters.nozzle or None,
                     )
                     state.entries = page["results"]
                     state.options = {
@@ -318,23 +668,47 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     ):
                         selector.set_options(state.options)
                     catalog_count.text = f"Showing {len(state.entries)} of {page['total']}"
-                    active_filters = [
-                        "Filaments" if catalog_scope.value == "filament" else "All preset types",
-                        *(catalog_app.value or []),
-                        *(catalog_source.value or []),
-                    ]
+                    active_filters = []
+                    if filters.profile_type:
+                        active_filters.append("Filaments")
+                    active_filters.extend(filters.applications)
+                    active_filters.extend(filters.sources)
                     for label, value in (
-                        ("Material", catalog_material.value),
-                        ("Machine", catalog_machine.value),
-                        ("Nozzle", catalog_nozzle.value),
+                        ("Material", filters.material),
+                        ("Machines", ", ".join(filters.machines)),
+                        ("Nozzle", filters.nozzle),
                     ):
                         if value:
                             active_filters.append(f"{label}: {value}")
-                    catalog_filters_summary.text = "Active filters: " + " · ".join(
-                        str(value) for value in active_filters
+                    catalog_filters_summary.text = (
+                        "Active filters: " + " · ".join(str(value) for value in active_filters)
+                        if active_filters
+                        else "No active filters"
                     )
+                    if persist:
+                        persist_catalog_filters(filters)
                 except Exception as exc:
                     ui.notify(str(exc), type="negative")
+
+            def catalog_filters_changed() -> None:
+                if not catalog_filter_events_suspended:
+                    refresh_catalog(persist=True)
+
+            def clear_all_catalog_filters() -> None:
+                filters = CatalogFilterState.cleared()
+                set_catalog_filter_controls(filters)
+                refresh_catalog(persist=True)
+
+            async def restore_catalog_filters() -> None:
+                try:
+                    stored = await ui.run_javascript(
+                        "localStorage.getItem(" + json.dumps(CATALOG_FILTERS_STORAGE_KEY) + ")"
+                    )
+                    filters = CatalogFilterState.from_json(str(stored) if stored else None)
+                    set_catalog_filter_controls(filters)
+                    refresh_catalog()
+                except Exception:
+                    return
 
             def inspect_profile() -> None:
                 if not catalog_select.value:
@@ -371,7 +745,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             {"headerName": "Explicit value", "field": "value", "minWidth": 220},
                             {"headerName": "Parent value", "field": "parent", "minWidth": 220},
                             {"headerName": "Difference", "field": "difference", "width": 130},
-                            {"headerName": "Defined by", "field": "source", "minWidth": 180},
+                            {
+                                "headerName": "Parent defined by",
+                                "field": "source",
+                                "minWidth": 180,
+                            },
                         ]
                     else:
                         values = view[str(inspect_mode.value)]
@@ -379,17 +757,28 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             {
                                 "key": key,
                                 "value": _display(value),
-                                "source": view["sources"].get(key, view["name"])
-                                if inspect_mode.value == "effective"
-                                else view["name"],
+                                "source": ", ".join(
+                                    _inherited_source_names(
+                                        view["name"],
+                                        view["sources"].get(key),
+                                        view["element_sources"].get(key, ()),
+                                    )
+                                ),
                             }
                             for key, value in sorted(values.items())
                         ]
                         columns = [
                             {"headerName": "Setting", "field": "key", "minWidth": 250},
                             {"headerName": "Value", "field": "value", "minWidth": 300, "flex": 1},
-                            {"headerName": "Defined by", "field": "source", "minWidth": 200},
                         ]
+                        if inspect_mode.value == "effective":
+                            columns.append(
+                                {
+                                    "headerName": "Inherited from",
+                                    "field": "source",
+                                    "minWidth": 200,
+                                }
+                            )
                     profile_grid.options.update(
                         {
                             "columnDefs": columns,
@@ -408,20 +797,23 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
             catalog_select.on_value_change(lambda _: inspect_profile())
             inspect_mode.on_value_change(lambda _: inspect_profile())
             for control in (catalog_app, catalog_source, catalog_scope):
-                control.on_value_change(lambda _: refresh_catalog())
+                control.on_value_change(lambda _: catalog_filters_changed())
             for control in (
                 catalog_search,
                 catalog_material,
-                catalog_machine,
                 catalog_nozzle,
             ):
                 control.on(
                     "update:model-value",
-                    lambda _: refresh_catalog(),
+                    lambda _: catalog_filters_changed(),
                     throttle=0.35,
                     leading_events=False,
                     trailing_events=True,
                 )
+            catalog_machine.on_value_change(lambda _: catalog_filters_changed())
+            clear_catalog_filters.on_click(clear_all_catalog_filters)
+            if core.loop is not None:
+                ui.timer(0.25, restore_catalog_filters, once=True)
 
         with ui.tab_panel(compare_tab):
             with ui.column().classes("w-full gap-4"):
@@ -451,7 +843,6 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         label="Groups",
                         multiple=True,
                     ).classes("w-64")
-                    only_different = ui.switch("Only differences", value=True)
                     include_meta = ui.switch("Include metadata", value=False)
                 with ui.row().classes("w-full items-center justify-between"):
                     compare_summary = ui.label("Select at least two profiles.").classes("ft-muted")
@@ -496,7 +887,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         include_meta=bool(include_meta.value),
                         key_pattern=str(compare_search.value or "") or None,
                         groups=set(compare_groups.value or []) or None,
-                        only_different=bool(only_different.value),
+                        only_different=True,
                     )
                     columns = [
                         {
@@ -529,17 +920,13 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         }
                         baseline = row["cells"][0]
                         for index, cell in enumerate(row["cells"]):
-                            value = _display(cell["value"], cell["present"])
-                            provenance = f"\n↳ {cell['source']}" if cell["source"] else ""
-                            explicit = " · explicit" if cell["explicit"] else " · inherited"
-                            difference = (
-                                f" · {cell.get('difference')}"
-                                if data["mode"] == "overrides"
-                                else explicit
+                            item[f"value_{index}"] = _comparison_cell_text(
+                                cell,
+                                baseline_value=baseline["value"],
+                                index=index,
+                                mode=data["mode"],
+                                profile_name=data["profiles"][index]["name"],
                             )
-                            delta = _numeric_delta(baseline["value"], cell["value"])
-                            delta_label = f" · Δ {delta}" if index and delta else ""
-                            item[f"value_{index}"] = value + delta_label + provenance + difference
                         rows.append(item)
                     compare_grid.options.update(
                         {
@@ -574,7 +961,6 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 compare_baseline,
                 compare_mode,
                 compare_groups,
-                only_different,
                 include_meta,
             ):
                 control.on_value_change(lambda _: render_comparison())
@@ -602,7 +988,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             include_meta=bool(include_meta.value),
                             key_pattern=str(compare_search.value or "") or None,
                             groups=set(compare_groups.value or []) or None,
-                            only_different=bool(only_different.value),
+                            only_different=True,
                         )
                         report = ComparisonReport(
                             labels=tuple(labels),
@@ -636,7 +1022,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             include_meta=bool(include_meta.value),
                             key_pattern=str(compare_search.value or "") or None,
                             groups=set(compare_groups.value or []) or None,
-                            only_different=bool(only_different.value),
+                            only_different=True,
                         )
                     path = Path(str(export_path.value or "")).expanduser().resolve()
                     if export_format.value == "csv":
@@ -803,7 +1189,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                             'data-testid="load-sources"'
                         )
                     ui.label(
-                        "Unselected settings come from the starting profile. Donor cells show both the selected profile and the ancestor that defines the effective value."
+                        "Unselected settings come from the starting profile. Donor cells identify an ancestor only when the effective value is inherited."
                     ).classes("ft-muted text-sm")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     composition_search = ui.input(
@@ -842,7 +1228,7 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 with ui.column().classes("ft-card p-4 w-full min-w-0"):
                     composition_summary = ui.label("Load a starting profile.").classes("ft-muted")
                     ui.label(
-                        "Choose a donor by clicking its value cell. Selected via and defined by remain separate."
+                        "Choose a donor by clicking its value cell. Mint identifies the value source; amber identifies removal. Ancestor provenance appears only for inherited values."
                     ).classes("ft-muted text-sm")
                     composition_grid = (
                         ui.aggrid(
@@ -852,6 +1238,15 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         )
                         .classes("ft-grid")
                         .props('data-testid="composition-grid"')
+                    )
+                    composition_grid.options.update(
+                        {
+                            ":getRowId": "params => params.data.key",
+                            ":onCellClicked": _composition_scroll_capture_handler(
+                                composition_grid.id
+                            ),
+                            "suppressScrollOnNewData": True,
+                        }
                     )
 
         with ui.tab_panel(build_tab):
@@ -1363,6 +1758,8 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 state.redo_stack.clear()
             recipe = make_recipe()
             data = workbench.composition_view(recipe)
+            for key in data.get("redundant_selections", []):
+                state.selections.pop(str(key), None)
             state.composition = data
             if reset or not state.fingerprints:
                 state.fingerprints = {
@@ -1388,26 +1785,12 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                 {"headerName": "Group", "field": "group", "width": 150, "filter": True},
             ]
             for index, source in enumerate(data["sources"]):
-                columns.append(
-                    {
-                        "headerName": source["name"],
-                        "field": f"source_{index}",
-                        "minWidth": 210,
-                        "wrapText": True,
-                        "autoHeight": True,
-                    }
-                )
+                columns.append(_composition_source_column(source["name"], index))
             columns.extend(
                 [
-                    {
-                        "headerName": "Composed result",
-                        "field": "result",
-                        "minWidth": 210,
-                        "wrapText": True,
-                        "autoHeight": True,
-                    },
+                    _composition_result_column(),
                     {"headerName": "Starting → result", "field": "change", "minWidth": 220},
-                    {"headerName": "Selected via", "field": "selected_via", "width": 170},
+                    {"headerName": "Value source", "field": "value_source", "width": 170},
                 ]
             )
             rows = []
@@ -1428,29 +1811,28 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                     "group": row["group_label"],
                 }
                 for index, cell in enumerate(row["cells"]):
-                    source = f"\n↳ defined by {cell['source']}" if cell["source"] else ""
-                    selected = row["result"]["selected_via"] == cell["name"]
-                    marker = "✓ selected\n" if selected else ""
-                    item[f"source_{index}"] = (
-                        marker + _display(cell["value"], cell["present"]) + source
+                    item[f"source_{index}"] = _composition_source_text(cell)
+                    item[f"_source_selected_{index}"] = (
+                        row["result"]["selected_selector"] == cell["selector"]
                     )
                 result = row["result"]
-                item["result"] = _display(result["value"], result["present"])
-                item["selected_via"] = result["selected_via"] or "Removed"
+                item["_result_state"] = (
+                    result["selection_kind"]
+                    if result["selection_kind"] in {"custom", "remove"}
+                    else ""
+                )
+                item["result"] = (
+                    "Removed"
+                    if result["selection_kind"] == "remove"
+                    else _display(result["value"], result["present"])
+                )
+                item["value_source"] = result["selected_via"] or "Removed"
                 starting = row["cells"][0]
                 before = _display(starting["value"], starting["present"])
                 after = _display(result["value"], result["present"])
                 item["change"] = "Unchanged" if before == after else f"{before} → {after}"
                 rows.append(item)
-            composition_grid.options.update(
-                {
-                    "columnDefs": columns,
-                    "rowData": rows,
-                    "animateRows": False,
-                    "defaultColDef": {"resizable": True, "sortable": True},
-                }
-            )
-            composition_grid.update()
+            _update_composition_grid(composition_grid, columns, rows, reset=reset)
             composition_summary.text = (
                 f"{len(rows)} visible settings · {len(state.selections)} explicit choices"
             )
@@ -1463,6 +1845,11 @@ def render_workbench(workbench: ProfileWorkbench) -> None:
                         selected_row["result"]["value"],
                         selected_row["result"]["present"],
                     )
+                else:
+                    state.active_key = None
+                    active_setting.text = "Select a setting row"
+                    active_value.text = ""
+                    active_help.text = ""
             update_workspace_state()
         except Exception as exc:
             ui.notify(str(exc), type="negative", multi_line=True)
@@ -1919,6 +2306,6 @@ def mount_workbench(app: FastAPI, workbench: ProfileWorkbench) -> None:
         root=lambda: render_workbench(workbench),
         title="Filament Tools Workbench",
         favicon="🧵",
-        dark=None,
+        dark=WORKBENCH_DARK_MODE,
         show_welcome_message=False,
     )

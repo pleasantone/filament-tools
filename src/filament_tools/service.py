@@ -11,6 +11,7 @@ from filament_tools.identity import existing_material_identities
 from filament_tools.lineage import inheritance_graph, lineage_context, lineage_descendants
 from filament_tools.model import (
     BuildArtifact,
+    ChoiceKind,
     CompositionRecipe,
     OutputMode,
     ProfileDraft,
@@ -19,7 +20,13 @@ from filament_tools.model import (
 from filament_tools.resolution import ProfileResolver
 from filament_tools.schema import GROUP_LABELS, group_for_key, setting_metadata
 from filament_tools.selectors import parse_selector
-from filament_tools.transforms import build_family, build_root, build_sparse, desired_values
+from filament_tools.transforms import (
+    build_family,
+    build_root,
+    build_sparse,
+    desired_values,
+    json_values_equal,
+)
 from filament_tools.validation import validate_artifact, validate_sparse_roundtrip
 
 
@@ -39,6 +46,7 @@ class ProfileWorkbench:
         source_kinds: Optional[set[str]] = None,
         vendor_or_material: Optional[str] = None,
         machine: Optional[str] = None,
+        machines: Optional[set[str]] = None,
         nozzle: Optional[str] = None,
     ) -> Dict[str, Any]:
         profiles, total = self.catalog.query_visible(
@@ -50,6 +58,7 @@ class ProfileWorkbench:
             source_kinds=source_kinds,
             vendor_or_material=vendor_or_material,
             machine=machine,
+            machines=machines,
             nozzle=nozzle,
         )
         entries: List[Dict[str, Any]] = []
@@ -236,13 +245,28 @@ class ProfileWorkbench:
                         "element_sources": [],
                         "difference": row.difference,
                     }
+            rows = [rows_by_key[key] for key in sorted(rows_by_key)]
+            if only_different:
+                rows = [
+                    row
+                    for row in rows
+                    if any(
+                        row["cells"][0]["present"] != cell["present"]
+                        or (
+                            row["cells"][0]["present"]
+                            and cell["present"]
+                            and not json_values_equal(row["cells"][0]["value"], cell["value"])
+                        )
+                        for cell in row["cells"][1:]
+                    )
+                ]
             return {
                 "mode": "overrides",
                 "labels": labels,
                 "profiles": [
                     {"name": profile.name, "path": str(profile.path)} for profile in profiles
                 ],
-                "rows": [rows_by_key[key] for key in sorted(rows_by_key)],
+                "rows": rows,
             }
         report = compare_profiles(
             profiles,
@@ -306,6 +330,7 @@ class ProfileWorkbench:
 
     def composition_view(self, recipe: CompositionRecipe) -> Dict[str, Any]:
         materialized = materialize_recipe(recipe, self.resolver)
+        redundant_selections = set(materialized.redundant_selections)
         selectors = [recipe.starting_source, *recipe.reference_sources]
         sources = [self.resolver.resolve_selector(selector) for selector in selectors]
         keys = set(materialized.values)
@@ -315,20 +340,53 @@ class ProfileWorkbench:
         rows = []
         for key in sorted(keys, key=lambda value: (group_for_key(value), value)):
             cells = []
+            starting_value = sources[0].values.get(key)
+            starting_present = key in sources[0].values
             for selector, source in zip(selectors, sources, strict=True):
+                present = key in source.values
                 cells.append(
                     {
                         "selector": selector,
                         "name": source.profile.name,
                         "value": source.values.get(key),
-                        "present": key in source.values,
+                        "present": present,
                         "source": source.sources.get(key),
                         "source_path": str(source.source_paths[key])
                         if key in source.source_paths
                         else None,
                         "explicit": key in source.profile.data,
                         "element_sources": list(source.element_sources.get(key, ())),
+                        "matches_starting": starting_present == present
+                        and (
+                            not present or json_values_equal(starting_value, source.values.get(key))
+                        ),
                     }
+                )
+            result_present = key in materialized.values
+            result_value = materialized.values.get(key)
+            sources_differ = any(not cell["matches_starting"] for cell in cells[1:])
+            result_differs = starting_present != result_present or (
+                starting_present
+                and result_present
+                and not json_values_equal(starting_value, result_value)
+            )
+            if not sources_differ and not result_differs:
+                continue
+            choice = None if key in redundant_selections else recipe.selections.get(key)
+            selection_kind = choice.kind if choice else ChoiceKind.SOURCE
+            selected_selector = (
+                choice.source
+                if choice and choice.kind == ChoiceKind.SOURCE
+                else recipe.starting_source
+                if choice is None
+                else None
+            )
+            selected_via = materialized.selection_sources.get(key)
+            if selection_kind == ChoiceKind.SOURCE and selected_via is None:
+                selected_via = next(
+                    source.profile.name
+                    for selector, source in zip(selectors, sources, strict=True)
+                    if selector == selected_selector
                 )
             rows.append(
                 {
@@ -338,9 +396,11 @@ class ProfileWorkbench:
                     "group_label": GROUP_LABELS[group_for_key(key)],
                     "cells": cells,
                     "result": {
-                        "value": materialized.values.get(key),
-                        "present": key in materialized.values,
-                        "selected_via": materialized.selection_sources.get(key),
+                        "value": result_value,
+                        "present": result_present,
+                        "selected_via": selected_via,
+                        "selection_kind": selection_kind.value,
+                        "selected_selector": selected_selector,
                         "source": materialized.value_sources.get(key),
                         "source_path": materialized.value_source_paths.get(key),
                         "element_sources": list(materialized.element_sources.get(key, ())),
@@ -359,6 +419,7 @@ class ProfileWorkbench:
                 for selector, source in zip(selectors, sources, strict=True)
             ],
             "rows": rows,
+            "redundant_selections": list(materialized.redundant_selections),
             "issues": [issue.model_dump(mode="json") for issue in materialized.issues],
         }
 

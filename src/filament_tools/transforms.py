@@ -50,7 +50,13 @@ def _version(source: ResolvedProfile, base: Optional[ResolvedProfile] = None) ->
     if not isinstance(version, str) or not version.strip():
         version = base.values.get("version") if base else None
     if not isinstance(version, str) or not version.strip():
-        raise ValueError("source or base must provide a nonempty profile version")
+        version = source.package_version
+    if not isinstance(version, str) or not version.strip():
+        version = base.package_version if base else None
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(
+            "source, base, or enclosing package manifest must provide a nonempty profile version"
+        )
     return version.strip()
 
 

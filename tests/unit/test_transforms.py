@@ -64,6 +64,60 @@ class TransformTests(unittest.TestCase):
         self.assertEqual(artifact.data["nozzle_temperature"], ["255"])
         self.assertEqual(artifact.data["filament_settings_id"], ["Tuned root"])
 
+    def test_package_manifest_version_fills_generated_profiles(self) -> None:
+        package_directory = self.directory / "system" / "BBL"
+        manifest_path = self.directory / "system" / "BBL.json"
+        write_profile(
+            self.directory,
+            "Bambulab",
+            {"version": "02.08.00.05"},
+            relative="system/BBL.json",
+        )
+        base_data = root_profile("Manifest PETG")
+        base_data.pop("version")
+        base_path = write_profile(
+            self.directory,
+            "Manifest PETG",
+            base_data,
+            relative="system/BBL/filament/Manifest PETG.json",
+        )
+        child_path = write_profile(
+            self.directory,
+            "Manifest PETG H2C",
+            {"inherits": "Manifest PETG", "nozzle_temperature": ["260"]},
+            relative="system/BBL/filament/Manifest PETG H2C.json",
+        )
+        self.assertTrue(package_directory.is_dir())
+        self.assertTrue(manifest_path.is_file())
+        catalog = ProfileCatalog([self.directory])
+        resolver = ProfileResolver(catalog)
+        base = resolver.resolve(catalog.load_path(base_path))
+        child = resolver.resolve(catalog.load_path(child_path))
+
+        sparse = build_sparse(
+            ProfileDraft(
+                name="Manifest sparse",
+                source=str(child_path),
+                base=str(base_path),
+                output_mode=OutputMode.SPARSE,
+            ),
+            child,
+            base,
+        )
+        root = build_root(
+            ProfileDraft(
+                name="Manifest root",
+                source=str(child_path),
+                output_mode=OutputMode.ROOT,
+                identity_mode=IdentityMode.INHERIT,
+            ),
+            child,
+        )
+
+        self.assertEqual(child.package_version, "02.08.00.05")
+        self.assertEqual(sparse.data["version"], "02.08.00.05")
+        self.assertEqual(root.data["version"], "02.08.00.05")
+
     def test_family_shares_filament_id_and_varies_targets(self) -> None:
         draft = ProfileDraft(
             name="Tuned family",

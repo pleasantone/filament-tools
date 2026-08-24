@@ -97,7 +97,7 @@ def create_editor_app(
         app_filter: List[str] = Query(default=[]),
         source: List[str] = Query(default=[]),
         vendor_material: Optional[str] = Query(default=None),
-        machine: Optional[str] = Query(default=None),
+        machine: List[str] = Query(default=[]),
         nozzle: Optional[str] = Query(default=None),
     ) -> Dict[str, Any]:
         return workbench.catalog_query(
@@ -108,7 +108,7 @@ def create_editor_app(
             applications=set(app_filter) or None,
             source_kinds=set(source) or None,
             vendor_or_material=vendor_material,
-            machine=machine,
+            machines=set(machine) or None,
             nozzle=nozzle,
         )
 

@@ -64,6 +64,89 @@ def _managed_copy_key(profile: Profile) -> Optional[Tuple[str, Tuple[str, ...]]]
     return (app_label(profile.path).casefold(), relative) if relative else None
 
 
+def _profile_namespace_position(path: Path) -> Optional[Tuple[Tuple[str, str], Tuple[str, ...]]]:
+    """Return a profile's slicer/package namespace and relative position."""
+    parts = [part.casefold() for part in path.parts]
+    markers = [index for index, part in enumerate(parts) if part in {"system", "profiles"}]
+    if not markers:
+        return None
+    marker = markers[-1]
+    if marker + 1 >= len(parts):
+        return None
+    namespace = app_label(path).casefold(), parts[marker + 1]
+    return namespace, tuple(parts[marker + 2 :])
+
+
+def _profile_namespace(path: Path) -> Optional[Tuple[str, str]]:
+    position = _profile_namespace_position(path)
+    return position[0] if position is not None else None
+
+
+def _profile_package_manifest(path: Path) -> Optional[Path]:
+    """Return the enclosing slicer package manifest for one profile path."""
+    parts = list(path.parts)
+    folded = [part.casefold() for part in parts]
+    markers = [index for index, part in enumerate(folded) if part in {"system", "profiles"}]
+    if not markers:
+        return None
+    marker = markers[-1]
+    if marker + 1 >= len(parts):
+        return None
+    package = parts[marker + 1]
+    if package.casefold().endswith(".json"):
+        return path if marker + 2 == len(parts) else None
+    return Path(*parts[: marker + 1]) / f"{package}.json"
+
+
+def _nearest_namespace_match(context: Path, profiles: Sequence[Profile]) -> Optional[Profile]:
+    context_position = _profile_namespace_position(context)
+    if context_position is None:
+        return None
+    namespace, context_parts = context_position
+    scored: List[Tuple[int, Profile]] = []
+    for profile in profiles:
+        candidate_position = _profile_namespace_position(profile.path.parent)
+        if candidate_position is None or candidate_position[0] != namespace:
+            continue
+        candidate_parts = candidate_position[1]
+        common = 0
+        for left, right in zip(context_parts, candidate_parts, strict=False):
+            if left != right:
+                break
+            common += 1
+        distance = len(context_parts) + len(candidate_parts) - (2 * common)
+        scored.append((distance, profile))
+    if not scored:
+        return None
+    minimum = min(distance for distance, _ in scored)
+    nearest = [profile for distance, profile in scored if distance == minimum]
+    return nearest[0] if len(nearest) == 1 else None
+
+
+def _shared_profile_namespace(path: Path) -> Optional[Tuple[str, str]]:
+    application = app_label(path).casefold()
+    package = {
+        "bambu studio": "bbl",
+        "orcaslicer": "orcafilamentlibrary",
+    }.get(application)
+    return (application, package) if package else None
+
+
+def _expand_discovery_roots(candidates: Iterable[Path]) -> List[Path]:
+    """Prefer active profile subtrees over recursively scanning config roots."""
+    expanded: List[Path] = []
+    for root in candidates:
+        profile_trees = (
+            root / "user",
+            root / "system",
+            root / "profiles",
+            root / "resources/profiles",
+        )
+        existing_trees = [path for path in profile_trees if path.exists()]
+        expanded.extend(existing_trees or (root,))
+    return _unique_existing(expanded)
+
+
 def discover_profile_roots(app: str = "all") -> List[Path]:
     """Best-effort profile roots for Bambu Studio, OrcaSlicer, and app bundles."""
     include_bambu = app in {"all", "bambu"}
@@ -146,12 +229,7 @@ def discover_profile_roots(app: str = "all") -> List[Path]:
         if executable:
             executable_dir = Path(executable).resolve().parent
             candidates.extend((executable_dir / "data_dir", executable_dir.parent / "data_dir"))
-    expanded: List[Path] = []
-    for root in candidates:
-        expanded.extend(
-            (root, root / "user", root / "system", root / "profiles", root / "resources/profiles")
-        )
-    return _unique_existing(expanded)
+    return _expand_discovery_roots(candidates)
 
 
 class ProfileCatalog:
@@ -165,6 +243,8 @@ class ProfileCatalog:
         self.warning_sink = warning_sink or (lambda message: None)
         self._warned: set[Tuple[Path, Path]] = set()
         self._query_values: Dict[Path, Dict[str, object]] = {}
+        self._package_versions: Dict[Path, Optional[str]] = {}
+        self._machine_scope_cache: Dict[Tuple[Tuple[str, ...], str], set[Path]] = {}
         self.refresh()
 
     def refresh(self) -> None:
@@ -172,12 +252,14 @@ class ProfileCatalog:
         self.by_name.clear()
         self.by_stem.clear()
         self._query_values.clear()
+        self._package_versions.clear()
+        self._machine_scope_cache.clear()
         seen: set[Path] = set()
         for root in self.roots:
             candidates = (
                 [root]
                 if root.is_file() and root.suffix.casefold() == ".json"
-                else root.rglob("*.json")
+                else (path for path in root.rglob("*.json") if not path.name.startswith((".", "_")))
             )
             for path in candidates:
                 try:
@@ -257,6 +339,24 @@ class ProfileCatalog:
                 names.add(profile.name)
         return names
 
+    def package_version(self, profile: Profile) -> Optional[str]:
+        """Return the nonempty version from the profile's package manifest."""
+        manifest = _profile_package_manifest(profile.path)
+        if manifest is None:
+            return None
+        if manifest in self._package_versions:
+            return self._package_versions[manifest]
+        version: Optional[str] = None
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8-sig"))
+            candidate = data.get("version") if isinstance(data, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                version = candidate.strip()
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            pass
+        self._package_versions[manifest] = version
+        return version
+
     def visible_profiles(self) -> List[Profile]:
         """Return catalog profiles after managed system/bundled copy preference."""
         return self._prefer_system(list(self.by_path.values()))
@@ -281,6 +381,7 @@ class ProfileCatalog:
         source_kinds: Optional[set[str]] = None,
         vendor_or_material: Optional[str] = None,
         machine: Optional[str] = None,
+        machines: Optional[set[str]] = None,
         nozzle: Optional[str] = None,
     ) -> tuple[List[Profile], int]:
         """Return one ranked window from the complete preferred catalog.
@@ -298,6 +399,16 @@ class ProfileCatalog:
         material_query = (vendor_or_material or "").strip().casefold()
         resolver = ProfileResolver(self)
         matches: List[Profile] = []
+        machine_queries = {
+            value.strip()
+            for value in ({machine} if machine else set()) | (machines or set())
+            if value.strip()
+        }
+        machine_scope = (
+            self._machine_scope_paths(machine_queries, nozzle)
+            if machine_queries or nozzle
+            else None
+        )
 
         def effective_values(profile: Profile) -> Dict[str, object]:
             values = self._query_values.get(profile.path)
@@ -307,6 +418,8 @@ class ProfileCatalog:
             return values
 
         for profile in self.visible_profiles():
+            if machine_scope is not None and profile.path not in machine_scope:
+                continue
             if normalized_apps and app_label(profile.path).casefold() not in normalized_apps:
                 continue
             if (
@@ -353,14 +466,6 @@ class ProfileCatalog:
                 if material_query not in effective_material:
                     continue
 
-            if machine or nozzle:
-                if resolved is None:
-                    try:
-                        resolved_values = effective_values(profile)
-                    except Exception:
-                        continue
-                if not compatible_with(resolved_values.get("compatible_printers"), machine, nozzle):
-                    continue
             matches.append(profile)
 
         matches.sort(key=lambda profile: self._rank(profile, normalized_query))
@@ -368,6 +473,54 @@ class ProfileCatalog:
         start = max(offset, 0)
         end = start + max(limit, 0)
         return matches[start:end], total
+
+    def _machine_scope_paths(self, machines: set[str], nozzle: Optional[str]) -> set[Path]:
+        """Return directly compatible profiles plus their inheritance ancestors."""
+        from filament_tools.resolution import ProfileResolver
+
+        normalized_machines = tuple(sorted(value.casefold() for value in machines))
+        normalized_nozzle = (nozzle or "").strip().casefold()
+        cache_key = normalized_machines, normalized_nozzle
+        cached = self._machine_scope_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        resolver = ProfileResolver(self)
+        visible = self.visible_profiles()
+        direct_matches: List[Profile] = []
+        for profile in visible:
+            try:
+                resolved = resolver.resolve(profile)
+            except Exception:
+                continue
+            self._query_values[profile.path] = resolved.values
+            compatibility = resolved.values.get("compatible_printers")
+            if normalized_machines:
+                matches = any(
+                    compatible_with(compatibility, machine, normalized_nozzle or None)
+                    for machine in normalized_machines
+                )
+            else:
+                matches = compatible_with(compatibility, None, normalized_nozzle or None)
+            if matches:
+                direct_matches.append(profile)
+
+        allowed = {profile.path for profile in direct_matches}
+        for profile in direct_matches:
+            current = profile
+            active = {current.path}
+            while current.inherits:
+                try:
+                    parent = self.find(current.inherits, prefer_dir=current.path.parent)
+                except Exception:
+                    break
+                if parent.path in active:
+                    break
+                active.add(parent.path)
+                allowed.add(parent.path)
+                current = parent
+        self._machine_scope_cache[cache_key] = allowed
+        return allowed
 
     def _prefer_system(self, profiles: Sequence[Profile]) -> List[Profile]:
         grouped: Dict[Tuple[str, Tuple[str, ...]], List[Profile]] = {}
@@ -407,16 +560,48 @@ class ProfileCatalog:
         matches = list(self.by_name.get(spec.casefold(), [])) or list(
             self.by_stem.get(spec.casefold(), [])
         )
-        if prefer_dir and matches:
-            parent = prefer_dir.resolve()
-            local = [path for path in matches if parent in path.parents]
-            if len(local) == 1:
-                return self.load_path(local[0])
         profiles = (
             self._prefer_system([self.load_path(path) for path in matches])
             if matches
             else self._prefer_system(self.search(spec, 500))
         )
+        if prefer_dir and profiles:
+            parent = prefer_dir.resolve()
+            same_directory = [profile for profile in profiles if profile.path.parent == parent]
+            if len(same_directory) == 1:
+                return same_directory[0]
+
+            namespace = _profile_namespace(parent)
+            if namespace is not None:
+                package_matches = [
+                    profile for profile in profiles if _profile_namespace(profile.path) == namespace
+                ]
+                if len(package_matches) == 1:
+                    return package_matches[0]
+                nearest = _nearest_namespace_match(parent, package_matches)
+                if nearest is not None:
+                    return nearest
+
+            shared_namespace = _shared_profile_namespace(parent)
+            if shared_namespace is not None:
+                shared_matches = [
+                    profile
+                    for profile in profiles
+                    if _profile_namespace(profile.path) == shared_namespace
+                ]
+                if len(shared_matches) == 1:
+                    return shared_matches[0]
+                nearest = _nearest_namespace_match(parent, shared_matches)
+                if nearest is not None:
+                    return nearest
+
+            application = app_label(parent)
+            if application != "Other":
+                application_matches = [
+                    profile for profile in profiles if app_label(profile.path) == application
+                ]
+                if len(application_matches) == 1:
+                    return application_matches[0]
         if len(profiles) == 1:
             return profiles[0]
         if not profiles:

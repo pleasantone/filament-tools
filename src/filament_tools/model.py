@@ -67,6 +67,7 @@ class ResolvedProfile:
     source_paths: Dict[str, Path]
     element_sources: Dict[str, Tuple[str, ...]]
     element_source_paths: Dict[str, Tuple[Path, ...]]
+    package_version: Optional[str]
     chain: Tuple[str, ...]
     fingerprint: str
 

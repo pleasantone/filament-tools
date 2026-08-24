@@ -33,6 +33,107 @@ class ResolutionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "inheritance cycle"):
                 ProfileResolver(catalog).resolve(catalog.load_path(first))
 
+    def test_parent_resolution_prefers_same_vendor_package(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "OrcaSlicer"
+            expected = write_profile(
+                root / "system",
+                "fdm_filament_pla",
+                {"temperature": 215},
+                "VendorOne/filament/base/fdm_filament_pla.json",
+            )
+            write_profile(
+                root / "system",
+                "fdm_filament_pla",
+                {"temperature": 225},
+                "VendorTwo/filament/base/fdm_filament_pla.json",
+            )
+            child = write_profile(
+                root / "system",
+                "Vendor PLA",
+                {"inherits": "fdm_filament_pla"},
+                "VendorOne/filament/Vendor/Vendor PLA.json",
+            )
+            catalog = ProfileCatalog([root])
+
+            result = ProfileResolver(catalog).resolve(catalog.load_path(child))
+
+            self.assertEqual(result.values["temperature"], 215)
+            self.assertEqual(result.source_paths["temperature"], expected.resolve())
+            with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                catalog.find("fdm_filament_pla")
+
+    def test_parent_resolution_falls_back_to_unique_match_in_same_application(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            expected = write_profile(
+                root / "BambuStudio/system",
+                "Shared Base",
+                {"temperature": 215},
+                "Shared/filament/Shared Base.json",
+            )
+            child = write_profile(
+                root / "BambuStudio/system",
+                "Vendor PLA",
+                {"inherits": "Shared Base"},
+                "BBL/filament/Vendor PLA.json",
+            )
+            write_profile(
+                root / "OrcaSlicer/system",
+                "Shared Base",
+                {"temperature": 225},
+                "Other/filament/Shared Base.json",
+            )
+            catalog = ProfileCatalog([root])
+
+            result = ProfileResolver(catalog).resolve(catalog.load_path(child))
+
+            self.assertEqual(result.values["temperature"], 215)
+            self.assertEqual(result.source_paths["temperature"], expected.resolve())
+
+    def test_parent_resolution_prefers_nearest_match_within_package(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "OrcaSlicer/profiles/InfiMech/machine"
+            expected = write_profile(root, "Machine Base", {"speed": 500})
+            write_profile(root / "Variant", "Machine Base", {"speed": 300})
+            child = write_profile(root, "Klipper Base", {"inherits": "Machine Base"})
+            catalog = ProfileCatalog([root.parents[2]])
+
+            result = ProfileResolver(catalog).resolve(catalog.load_path(child))
+
+            self.assertEqual(result.values["speed"], 500)
+            self.assertEqual(result.source_paths["speed"], expected.resolve())
+
+    def test_parent_resolution_uses_application_shared_package_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "OrcaSlicer/profiles"
+            expected = write_profile(
+                root / "OrcaFilamentLibrary/filament/base",
+                "fdm_filament_pla",
+                {"temperature": 215},
+            )
+            write_profile(
+                root / "BBL/filament",
+                "fdm_filament_pla",
+                {"temperature": 220},
+            )
+            write_profile(
+                root / "OtherVendor/filament",
+                "fdm_filament_pla",
+                {"temperature": 225},
+            )
+            child = write_profile(
+                root / "VendorWithoutBase/filament",
+                "Vendor PLA",
+                {"inherits": "fdm_filament_pla"},
+            )
+            catalog = ProfileCatalog([root])
+
+            result = ProfileResolver(catalog).resolve(catalog.load_path(child))
+
+            self.assertEqual(result.values["temperature"], 215)
+            self.assertEqual(result.source_paths["temperature"], expected.resolve())
+
     def test_nil_vector_positions_inherit_parent_elements_with_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)

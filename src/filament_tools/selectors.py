@@ -44,6 +44,11 @@ def normalize_nozzle(nozzle: str) -> str:
         return value
 
 
+def normalize_machine(machine: str) -> str:
+    value = machine.casefold().strip()
+    return {"x1c": "x1 carbon"}.get(value, value)
+
+
 def compatible_with(
     compatibility: Any,
     machine: Optional[str] = None,
@@ -54,7 +59,7 @@ def compatible_with(
         return True
     if not isinstance(compatibility, list) or not compatibility:
         return False
-    machine_query = machine.casefold().strip() if machine else None
+    machine_query = normalize_machine(machine) if machine else None
     nozzle_query = normalize_nozzle(nozzle) if nozzle else None
     for item in compatibility:
         if not isinstance(item, str):

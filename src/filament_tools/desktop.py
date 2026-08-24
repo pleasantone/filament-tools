@@ -13,7 +13,7 @@ from nicegui import native, ui
 from filament_tools import __version__
 from filament_tools.catalog import ProfileCatalog, discover_profile_roots
 from filament_tools.editor.app import create_editor_app
-from filament_tools.editor.workbench_ui import render_workbench
+from filament_tools.editor.workbench_ui import WORKBENCH_DARK_MODE, render_workbench
 from filament_tools.service import ProfileWorkbench
 
 APP_NAME = "Filament Tools"
@@ -63,7 +63,7 @@ def run() -> None:
         port=native.find_open_port(8765, 8865),
         title=APP_NAME,
         favicon="🧵",
-        dark=None,
+        dark=WORKBENCH_DARK_MODE,
         native=True,
         window_size=(1440, 1000),
         reload=False,

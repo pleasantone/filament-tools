@@ -16,7 +16,7 @@ from filament_tools.model import (
 )
 from filament_tools.resolution import ProfileResolver
 from filament_tools.schema import IDENTITY_KEYS
-from filament_tools.transforms import desired_values
+from filament_tools.transforms import desired_values, json_values_equal
 
 LOCKED_COMPOSITION_KEYS = IDENTITY_KEYS | {"compatible_printers"}
 
@@ -30,6 +30,7 @@ class MaterializedComposition:
     value_sources: Dict[str, str]
     value_source_paths: Dict[str, str]
     element_sources: Dict[str, Tuple[str, ...]]
+    redundant_selections: Tuple[str, ...]
     issues: Tuple[ValidationIssue, ...]
 
 
@@ -70,11 +71,15 @@ def materialize_recipe(
     value_sources = dict(starting.sources)
     value_source_paths = {key: str(path) for key, path in starting.source_paths.items()}
     element_sources = dict(starting.element_sources)
+    redundant_selections: list[str] = []
 
     for key, choice in recipe.selections.items():
         if key in LOCKED_COMPOSITION_KEYS:
             raise ValueError(f"{key} is managed by output controls and cannot be composed")
         if choice.kind == ChoiceKind.REMOVE:
+            if key not in starting.values:
+                redundant_selections.append(key)
+                continue
             removed.append(key)
             selection_sources.pop(key, None)
             value_sources.pop(key, None)
@@ -82,6 +87,9 @@ def materialize_recipe(
             element_sources.pop(key, None)
             continue
         if choice.kind == ChoiceKind.CUSTOM:
+            if key in starting.values and json_values_equal(choice.value, starting.values[key]):
+                redundant_selections.append(key)
+                continue
             edits[key] = choice.value
             selection_sources[key] = "Custom value"
             value_sources[key] = "Custom value"
@@ -94,6 +102,9 @@ def materialize_recipe(
         donor = resolved[selector]
         if key not in donor.values:
             raise ValueError(f"setting {key} is not available from {donor.profile.name}")
+        if key in starting.values and json_values_equal(donor.values[key], starting.values[key]):
+            redundant_selections.append(key)
+            continue
         edits[key] = donor.values[key]
         selection_sources[key] = donor.profile.name
         value_sources[key] = donor.sources.get(key, donor.profile.name)
@@ -132,5 +143,6 @@ def materialize_recipe(
         value_sources=value_sources,
         value_source_paths=value_source_paths,
         element_sources=element_sources,
+        redundant_selections=tuple(redundant_selections),
         issues=tuple(issues),
     )

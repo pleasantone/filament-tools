@@ -95,12 +95,17 @@ rolls back files from the current operation if a later write fails.
 The editor is a local FastAPI/NiceGUI application with five connected surfaces:
 
 1. **Library**: server-side filament discovery/filtering plus structured
-   effective, override, provenance, summary, and raw inspection.
+   effective, override, provenance, summary, and raw inspection. Browser-local
+   filters persist across runs, support multiple machine matches, retain the
+   ancestors of compatible profiles, and can be cleared as one action.
 2. **Compare**: a two-or-more-profile effective/raw/override grid with a chosen
-   baseline, setting and semantic filters, provenance, deltas, and a difference
-   summary.
-3. **Create profile**: starting/reference selection and a full-width direct-donor
-   grid, with contextual custom/removal and group controls plus undo/redo.
+   baseline, setting and semantic filters, ancestor-only UI provenance, deltas,
+   and only settings that differ across the displayed profiles.
+3. **Create profile**: starting/reference selection and a difference-only,
+   scroll-stable direct-donor grid. Semantic cell backgrounds identify the
+   selected value source or removal without adding marker text. Effectively
+   redundant choices collapse to the starting-profile baseline; contextual
+   custom/removal and group controls plus undo/redo remain available.
 4. **Review & install**: progressive sparse or full AMS output, family variants,
    revision-bound validation, exclusive writes, project persistence, recovery,
    and a separately confirmable installation plan.

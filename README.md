@@ -24,8 +24,9 @@ uv-managed `.venv` when needed. The console command can also be run as
 
 ## Discovery and selection
 
-The default catalog searches common Bambu Studio and OrcaSlicer user, system,
-and application-resource locations on macOS, Windows, and Linux.
+The default catalog searches active Bambu Studio and OrcaSlicer user, system,
+and application-resource profile trees on macOS, Windows, and Linux. Automatic
+discovery does not recursively include sibling `user_backup-*` trees.
 
 ```bash
 uv run filament-tools catalog paths
@@ -40,8 +41,11 @@ Use `--no-auto-discover` for a controlled catalog.
 
 Managed system and bundled profiles with the same relative path are treated as
 copies. The system copy wins; a warning identifies both files when their parsed
-JSON differs. Unrelated same-name profiles remain ambiguous, and an exact JSON
-path is always accepted.
+JSON differs. Inherited parents are resolved in the child profile's vendor
+package first, then through the application's shared profiles or a unique
+same-application match. Unrelated same-name profiles remain ambiguous, and an
+exact JSON path is always accepted. Bulk scans ignore hidden or
+underscore-prefixed JSON files; an explicit path can still load one.
 
 Selectors support effective printer compatibility filters:
 
@@ -219,18 +223,29 @@ uv run filament-tools editor
 Open `http://127.0.0.1:8765`. The workbench follows the editing workflow:
 
 - **Library** searches the complete preferred catalog on the server, defaults
-  to filament presets, and filters by application, source, material/vendor,
-  machine, and nozzle. Inspection separates effective values, explicit
-  overrides, provenance, and raw JSON.
+  to filament presets compatible with H2C or X1C, and filters by application,
+  source, material/vendor, one or more machines, and nozzle. Machine filtering
+  retains the generic inheritance parents of matching profiles. Library filters
+  persist in browser storage between runs; **Clear all filters** removes the
+  saved search and every active filter. Inspection separates effective values,
+  explicit overrides, provenance, and raw JSON.
 - **Compare** automatically refreshes a two-or-more-profile effective, raw, or
-  override grid. Choose a baseline and filter by setting, metadata, semantic
-  group, or difference; provenance and numeric deltas remain visible.
+  override grid showing only settings that differ across the selected profiles.
+  Choose a baseline and filter by setting, metadata, or semantic group. Direct
+  values omit redundant self-provenance labels; inherited values identify their
+  defining ancestor, and numeric deltas remain visible.
 - **Create profile** starts from the comparison or an independent source set.
-  Select donor values directly in the full-width grid, with custom values,
-  removals, group actions, filters, and undo/redo in contextual panels.
+  It shows only source differences or explicit result changes and silently uses
+  the starting-profile value when a choice is effectively identical. Select
+  donor values directly in the full-width grid without losing scroll position.
+  Mint cells identify the profile or custom value supplying the result; amber
+  result cells identify removals. Custom values, group actions, filters, and
+  undo/redo remain available in contextual panels.
 - **Review & install** chooses sparse or full output, previews and validates the
   current recipe revision, writes JSON, saves projects, and installs only from a
-  current reviewed plan. Recipe changes clear stale output and disable writes.
+  current reviewed plan. When a valid slicer profile omits an inline version,
+  generated output uses its enclosing package-manifest version. Recipe changes
+  clear stale output and disable writes.
 - **Lineage explorer** loads one profile, its complete ancestors, and immediate
   dependents on demand. Descendant branches and catalog-wide problems are
   deliberate actions rather than startup work.

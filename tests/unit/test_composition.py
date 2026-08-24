@@ -28,6 +28,7 @@ class CompositionTests(unittest.TestCase):
                 "inherits": "Starting PETG",
                 "nozzle_temperature": ["265"],
                 "filament_max_volumetric_speed": ["24"],
+                "donor_only_setting": "fast",
             },
         )
         self.workbench = ProfileWorkbench(ProfileCatalog([self.directory]))
@@ -77,6 +78,39 @@ class CompositionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "managed by output controls"):
             materialize_recipe(recipe, ProfileResolver(self.workbench.catalog))
+
+    def test_effectively_identical_donor_choice_falls_back_to_starting_profile(self) -> None:
+        recipe = self.recipe()
+        recipe.selections = {
+            "fan_max_speed": CompositionChoice(
+                kind=ChoiceKind.SOURCE,
+                source=str(self.donor),
+            )
+        }
+
+        materialized = materialize_recipe(recipe, ProfileResolver(self.workbench.catalog))
+
+        self.assertEqual(materialized.redundant_selections, ("fan_max_speed",))
+        self.assertEqual(materialized.selection_sources["fan_max_speed"], "Starting PETG")
+        self.assertNotIn("fan_max_speed", materialized.draft.edits)
+
+    def test_composition_view_only_includes_source_or_result_differences(self) -> None:
+        view = self.workbench.composition_view(self.recipe())
+        rows = {row["key"]: row for row in view["rows"]}
+        keys = set(rows)
+
+        self.assertIn("nozzle_temperature", keys)
+        self.assertIn("filament_max_volumetric_speed", keys)
+        self.assertIn("fan_max_speed", keys)
+        self.assertNotIn("version", keys)
+        self.assertEqual(rows["nozzle_temperature"]["result"]["selected_selector"], str(self.donor))
+        self.assertEqual(rows["nozzle_temperature"]["result"]["selection_kind"], "source")
+        self.assertIsNone(rows["fan_max_speed"]["result"]["selected_selector"])
+        self.assertEqual(rows["fan_max_speed"]["result"]["selection_kind"], "custom")
+        self.assertEqual(
+            rows["donor_only_setting"]["result"]["selected_selector"], str(self.starting)
+        )
+        self.assertEqual(rows["donor_only_setting"]["result"]["selected_via"], "Starting PETG")
 
 
 if __name__ == "__main__":

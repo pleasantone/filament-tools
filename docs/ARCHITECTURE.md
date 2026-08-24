@@ -16,19 +16,28 @@ calculate deltas, manufacture identities, or decide installation destinations.
 
 ## Profile catalog
 
-`ProfileCatalog` indexes JSON objects that resemble slicer presets. Bulk scans
-ignore malformed/unrelated JSON; explicit path loads surface parse and shape
-errors. Names, filename stems, and paths are indexed separately.
+`ProfileCatalog` indexes JSON objects that resemble slicer presets. Automatic
+discovery selects active `user`, `system`, and application-resource profile
+trees instead of recursively scanning sibling backup trees. Bulk scans ignore
+malformed/unrelated JSON and hidden or underscore-prefixed files;
+explicit path loads surface parse and shape errors. Names, filename stems, and
+paths are indexed separately.
 
 Search ranking is exact name, exact stem, prefix, then substring. Corresponding
 managed `system` and bundled `resources/profiles` paths are collapsed before
 selection. The system copy wins and a warning is emitted once when parsed JSON
-differs. All other equal-rank ambiguity is an error. Exact paths remain the
-escape hatch.
+differs. Recursive parent lookup prefers an exact local-directory match, then
+the nearest match in the same application/vendor package, then the application's
+shared package, and finally a unique same-application match. Direct selectors
+do not receive this inheritance context: all other equal-rank ambiguity is an
+error. Exact paths remain the escape hatch.
 
 Selectors filter on recursively resolved `compatible_printers`. Machine matching
-is case-insensitive; nozzle matching recognizes a numeric diameter followed by
-`nozzle` and does not infer nozzle material.
+is case-insensitive and recognizes `X1C` as the slicer's `X1 Carbon` machine
+name. Nozzle matching recognizes a numeric diameter followed by `nozzle` and
+does not infer nozzle material. Multi-machine catalog filters use OR semantics
+and retain every ancestor of directly compatible profiles, allowing generic
+parents to remain searchable within a machine-scoped library.
 
 ## Resolution and provenance
 
@@ -56,6 +65,11 @@ HTML, and API clients see the same selected data.
 
 JSON equality is type-sensitive: `1`, `1.0`, `true`, and `"1"` are distinct.
 Missing values are represented by absent keys internally and rendered as `∅`.
+The workbench comparison and composition surfaces suppress rows whose displayed
+effective values are all equal. A composition choice that produces the same
+effective presence and value as the starting profile is redundant and resolves
+to the starting-profile baseline. UI provenance labels identify ancestors only;
+the underlying report and resolution models retain complete provenance.
 
 ## Composition, draft, and transformation pipeline
 
@@ -82,7 +96,9 @@ Sparse projection:
 - requires a resolvable base with effective `filament_id`;
 - emits type-sensitive behavioral differences only;
 - cannot represent deletion of a base-supplied setting;
-- reconstructs name/from/version/settings identity explicitly;
+- reconstructs name/from/version/settings identity explicitly, using the
+  enclosing slicer package-manifest version when the resolved source and base
+  omit an inline version;
 - omits material/cloud identity and retains required structural fields;
 - receives a round-trip equivalence check against base plus child.
 

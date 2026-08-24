@@ -8,6 +8,7 @@ from filament_tools.catalog import ProfileCatalog
 from filament_tools.comparison import compare_profiles
 from filament_tools.reporting.terminal import comparison_text
 from filament_tools.resolution import ProfileResolver
+from filament_tools.service import ProfileWorkbench
 from tests.support import SRC, root_profile, write_profile  # noqa: F401
 
 
@@ -29,6 +30,30 @@ class ComparisonTests(unittest.TestCase):
             rendered = comparison_text(report)
             self.assertIn("∅", rendered)
             self.assertIn("null", rendered)
+
+    def test_override_view_hides_values_equal_across_displayed_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            write_profile(directory, "Base", root_profile("Base"))
+            left = write_profile(
+                directory,
+                "Left",
+                {"inherits": "Base", "nozzle_temperature": ["265"]},
+            )
+            right = write_profile(
+                directory,
+                "Right",
+                {"inherits": "Base", "nozzle_temperature": ["265"]},
+            )
+            workbench = ProfileWorkbench(ProfileCatalog([directory]))
+
+            view = workbench.comparison_view(
+                [str(left), str(right)],
+                mode="overrides",
+                only_different=True,
+            )
+
+            self.assertNotIn("nozzle_temperature", {row["key"] for row in view["rows"]})
 
 
 if __name__ == "__main__":

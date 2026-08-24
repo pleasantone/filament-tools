@@ -60,6 +60,12 @@ class EditorIntegrationTests(unittest.TestCase):
             self.assertEqual(catalog_response.status_code, 200)
             self.assertEqual(catalog_response.json()["total"], 2)
             self.assertIn("Editor PETG", catalog_response.text)
+            machine_filtered = client.get(
+                "/api/profiles",
+                params={"q": "Editor", "machine": ["H2C", "X1C"]},
+            )
+            self.assertEqual(machine_filtered.status_code, 200)
+            self.assertEqual(machine_filtered.json()["total"], 2)
             printers = client.get("/api/printers", params={"q": "H2C"})
             self.assertEqual(printers.status_code, 200)
             self.assertEqual(printers.json()["results"], ["Bambu Lab H2C 0.4 nozzle"])
