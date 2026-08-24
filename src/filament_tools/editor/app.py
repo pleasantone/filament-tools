@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from filament_tools.editor.install_plans import ReviewedInstallPlans
 from filament_tools.editor.projects import (
     load_composition_project,
     load_project,
@@ -70,6 +71,10 @@ class CompositionInstallRequest(BaseModel):
     user_folder: Optional[str] = None
 
 
+class ApplyInstallRequest(BaseModel):
+    plan_id: str = Field(min_length=1)
+
+
 def _artifact_json(artifact: Any) -> Dict[str, Any]:
     return {
         "name": artifact.name,
@@ -92,6 +97,22 @@ def create_editor_app(
         else FastAPI(title="Filament Tools Profile Editor", version="0.2.0")
     )
     app.add_middleware(LocalEditorBoundary)
+    reviewed_install_plans = ReviewedInstallPlans()
+
+    def install_plan_json(plan: Any) -> Dict[str, Any]:
+        plan_id = reviewed_install_plans.issue(plan) if plan.valid else None
+        return {
+            "plan_id": plan_id,
+            "valid": plan.valid,
+            "operations": [
+                {
+                    "destination": str(operation.destination),
+                    "is_root": operation.is_root,
+                }
+                for operation in plan.operations
+            ],
+            "issues": [issue.model_dump(mode="json") for issue in plan.issues],
+        }
 
     @app.get("/api/profiles")
     def profiles(
@@ -250,23 +271,15 @@ def create_editor_app(
     def install_preview(request: InstallPreviewRequest) -> Dict[str, Any]:
         try:
             artifacts = workbench.build(request.draft)
+            issues = workbench.validate(request.draft, artifacts)
             plan = plan_install(
                 artifacts=artifacts,
                 app=request.app,
                 app_data_dir=Path(request.config_dir) if request.config_dir else None,
                 user_folder=request.user_folder,
             )
-            return {
-                "valid": plan.valid,
-                "operations": [
-                    {
-                        "destination": str(operation.destination),
-                        "is_root": operation.is_root,
-                    }
-                    for operation in plan.operations
-                ],
-                "issues": [issue.model_dump(mode="json") for issue in plan.issues],
-            }
+            plan.issues[:0] = issues
+            return install_plan_json(plan)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -289,21 +302,14 @@ def create_editor_app(
     def composition_install_preview(request: CompositionInstallRequest) -> Dict[str, Any]:
         try:
             plan = _composition_install_plan(request)
-            return {
-                "valid": plan.valid,
-                "operations": [
-                    {"destination": str(operation.destination), "is_root": operation.is_root}
-                    for operation in plan.operations
-                ],
-                "issues": [issue.model_dump(mode="json") for issue in plan.issues],
-            }
+            return install_plan_json(plan)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/composition/install")
-    def composition_install(request: CompositionInstallRequest) -> Dict[str, Any]:
+    def composition_install(request: ApplyInstallRequest) -> Dict[str, Any]:
         try:
-            plan = _composition_install_plan(request)
+            plan = reviewed_install_plans.consume(request.plan_id)
             return {"paths": [str(path) for path in apply_install_plan(plan)]}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

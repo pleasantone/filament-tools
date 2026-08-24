@@ -19,6 +19,44 @@ from filament_tools.service import ProfileWorkbench
 
 @unittest.skipIf(TestClient is None, "FastAPI development dependencies are not installed")
 class EditorIntegrationTests(unittest.TestCase):
+    def test_composition_install_requires_and_consumes_reviewed_plan(self) -> None:
+        from filament_tools.editor.app import create_editor_app
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = write_profile(directory, "Install PETG", root_profile("Install PETG"))
+            config = directory / "BambuStudio"
+            config.mkdir()
+            client = TestClient(
+                create_editor_app(ProfileWorkbench(ProfileCatalog([directory])), mount_ui=False),
+                base_url="http://127.0.0.1",
+            )
+            request = {
+                "recipe": {
+                    "name": "Installed PETG",
+                    "starting_source": str(source),
+                    "output_mode": "root",
+                    "identity_mode": "inherit",
+                },
+                "config_dir": str(config),
+            }
+
+            direct = client.post("/api/composition/install", json=request)
+            self.assertEqual(direct.status_code, 422)
+            preview = client.post("/api/composition/install-plan", json=request)
+            self.assertEqual(preview.status_code, 200, preview.text)
+            self.assertTrue(preview.json()["valid"])
+            plan_id = preview.json()["plan_id"]
+            self.assertTrue(plan_id)
+
+            installed = client.post("/api/composition/install", json={"plan_id": plan_id})
+            self.assertEqual(installed.status_code, 200, installed.text)
+            destination = config / "user/default/filament/base/Installed PETG.json"
+            self.assertTrue(destination.is_file())
+            replayed = client.post("/api/composition/install", json={"plan_id": plan_id})
+            self.assertEqual(replayed.status_code, 400)
+            self.assertIn("already used", replayed.text)
+
     def test_composition_project_api_supports_save_then_replace(self) -> None:
         from filament_tools.editor.app import create_editor_app
 

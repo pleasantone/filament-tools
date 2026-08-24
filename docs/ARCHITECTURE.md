@@ -162,7 +162,9 @@ Pre-existing files are never removed.
 
 The FastAPI app exposes catalog, profile, comparison, lineage, composition,
 preview, exclusive build, project persistence, install-plan, and confirmed
-installation endpoints. NiceGUI is mounted on that application and supplies a
+installation endpoints. A valid preview issues a short-lived opaque plan ID;
+the mutation endpoint consumes that exact plan once and cannot rebuild or apply
+an unreviewed recipe. NiceGUI is mounted on that application and supplies a
 per-browser Profiles/Compare/Lineage/Compose/Build workbench. It calls the same
 `ProfileWorkbench` services and does not duplicate grouping, inheritance,
 composition, builders, identity, validation, or installation semantics.

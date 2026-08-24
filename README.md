@@ -248,7 +248,9 @@ rejected.
   undo/redo remain available in contextual panels.
 - **Review & install** chooses sparse or full output, previews and validates the
   current recipe revision, writes JSON, saves projects, and installs only from a
-  current reviewed plan. When a valid slicer profile omits an inline version,
+  current reviewed plan. API installation likewise requires a short-lived,
+  one-use plan ID returned by the preview endpoint. When a valid slicer profile
+  omits an inline version,
   generated output uses its enclosing package-manifest version. Recipe changes
   clear stale output and disable writes.
 - **Lineage explorer** loads one profile, its complete ancestors, and immediate
